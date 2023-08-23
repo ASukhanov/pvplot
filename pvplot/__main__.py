@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting tool for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v0.5.0 2023-08-22'# Stripchart mode is working
+__version__ = 'v0.5.1 2023-08-23'# CustomViewbox dont need a dataset, scrolling corrected
 
 #TODO: add_curves is not correct for multiple curves
 #TODO: move Add Dataset to Dataset options
@@ -103,12 +103,12 @@ def cprint(msg):
 
 gAccess = {'E:':(EPICSAccess,2), 'L:':(LITEAccess,2)}
 def get_pv(adopar:str, prop='value'):
-    #printvv(f'>get_pv {adopar}')
+    #print(f'>get_pv {adopar}')
     adopar, vslice = split_slice(adopar)
     access = gAccess.get(adopar[:2], (ADOAccess,0))
     access,prefixLength = gAccess.get(adopar[:2], (ADOAccess,0))
     if access is None:
-        printe(f'No access metod for {adopar}')
+        printe(f'No access method for {adopar}')
         sys.exit(1)
     try:
         pvTuple = tuple(adopar[prefixLength:].rsplit(':',1))
@@ -217,13 +217,14 @@ def update_data():
             if l == 1: yd = yd[0]
         except: 
             l = 1
-            
-        #if isinstance(yd,(list,tuple,np.ndarray)):
+
+        # Evaluate X and Y arrays
         if l > 1:
-            # array plot
+            # the plot is array plot
             y = np.array(yd)
             x = np.arange(len(yd))*gScaleUnits[X][Scale]
-        else: # scrolling or correlation plot
+        else:
+            # the plot is scrolling or correlation plot
             ptr = dataset.dataPtr
             dataset.data[YY][ptr] = yd
             if len(curvePars) > 1: 
@@ -238,12 +239,12 @@ def update_data():
             else:
                 # scrolling plot with time scale
                 #print(f'ts: {round(ts,3), round(dataset.viewXRange[1],3)}')
-                if dataset.viewBox and ts > dataset.viewXRange[1]:
+                if dataset.scrolling and ts > dataset.viewXRange[1]:
                     dataset.shift_viewXRange()
                 dataset.data[XX][ptr] = ts
             ptr += 1
             dataset.dataPtr = ptr
-            #printv(f'ptr: {ptr,dataset.data[YY].shape[0]}')
+            #print(f'ptr: {ptr,dataset.data[YY].shape[0]}')
             if ptr >= dataset.data[YY].shape[0]:
                 tmp = dataset.data
                 dataset.data = [np.empty(dataset.data[YY].shape[0] * 2),
@@ -253,6 +254,8 @@ def update_data():
                 #print(f'adjust x from {tmp[XX].shape} to {dataset.data[XX].shape}')
             x = dataset.data[XX][:ptr]
             y = dataset.data[YY][:ptr]
+
+        # Plot the dataset
         #print(f'symbolSize: {curveName,dataset.symbol,dataset.symbolSize}')
         pen = dataset.pen if dataset.width else None
         #printvv(f'x:{x}\ny:{y}')
@@ -347,6 +350,7 @@ class Dataset():
         # members for stripchart plot
         self.viewXSize = 9E9# Wed Mar 14 2255 16:00:00
         self.viewXRange = [0., 9E9]
+        self.scrolling = False
         
         # plotting options, described in 
         # http://www.pyqtgraph.org/documentation/graphicsItems/plotdataitem.html#pyqtgraph.PlotDataItem
@@ -364,8 +368,8 @@ class Dataset():
         # ``````````````````` Add plotItem ``````````````````````````````````````
         dock = name.split('.')[0]
         printv('plotItem for: '+str([s for s in self.adoPars])+', name:'+str(dock))
-        ScrolLength = 10
-        self.data = [np.empty(ScrolLength),np.empty(ScrolLength)]# [X,U] data storage
+        initialWidth = 10
+        self.data = [np.empty(initialWidth),np.empty(initialWidth)]# [X,U] data storage
         self.dataPtr = 0
         count = self.adoPars[0][1] #
         print(f'adoPars,count: {self.adoPars,count}')
@@ -382,15 +386,17 @@ class Dataset():
             self.plotItem = pg.PlotDataItem(name=name, pen=self.pen)
             #self.plotItem = pg.PlotCurveItem(name=name, pen=self.pen)
         
-        # assign the plotwidget if it exist, if not, create new dock and widget
+        # assign the plotwidget
         if dock in gMapOfPlotWidgets:
+            # dock already exist, use the existing plotwidget
             self.plotWidget = gMapOfPlotWidgets[dock]
         else:
+            # new dock need to be created
+            # create vewBox with plotwidget
             self.viewBox = CustomViewBox(dock, self)
             self.viewBox.setMouseMode(self.viewBox.RectMode)
             self.viewBox.sigRangeChangedManually.connect(self.xrangeChanged)
             printv('adding plotwidget:'+dock)
-            #title = self.adoPars[0][0]
             title = None
             if count == 1 and not isCorrelationPlot:
                 self.plotWidget = pg.PlotWidget(title=title, viewBox=self.viewBox,
@@ -408,6 +414,8 @@ class Dataset():
                 self.plotWidget.setLabel('bottom','time', units='date', unitPrefix='')
             else:
                 self.plotWidget.setLabel('bottom',gScaleUnits[X][Units])
+
+        # set X and Y ranges
         rangeMap = {X: (pargs.xrange, self.plotWidget.setXRange),
                     Y: (pargs.yrange, self.plotWidget.setYRange)}
         for axis,v in rangeMap.items():
@@ -419,23 +427,23 @@ class Dataset():
 
         if self.plotItem:
             self.plotWidget.addItem(self.plotItem)
-
         self.timestamp = 0.
 
     def __str__(self):
         return f'Dataset {self.name}, x: {self.data[XX].shape}'
 
     def xrangeChanged(self):
-        #self.viewBox.enableAutoRange(axis='x', enable=0.1)
-        self.viewXRange = self.viewBox.viewRange()[X]
-        self.viewXSize = self.viewXRange[1] - self.viewXRange[0]
-        #hrange = self.data[XX][0],self.data[XX][self.dataPtr-1]
+        viewRange = self.viewBox.viewRange()
+        self.viewXRange = viewRange[X]
+        viewlimit = self.viewXRange[1]
+        self.viewXSize = viewlimit - self.viewXRange[0]
         rstack = self.viewBox.rangestack
-        #rstack.append(hrange)
-        rstack.append(self.viewXRange)
+        rstack.append(viewRange)
         if len(rstack) > 10:
             rstack.pop(0)
-        #print(f'viewRange: {self.viewXRange}, {time.time()}, stack:{rstack}')
+        self.scrolling = (self.viewBox is not None)\
+            and viewlimit > self.data[X][self.dataPtr-1]
+        #print(f'scrolling: {self.scrolling}')
 
     def shift_viewXRange(self):
         if self.viewBox.state['autoRange'][X]:
@@ -445,7 +453,6 @@ class Dataset():
         self.viewXRange[1] += dx
         #print(f'>shift_viewXRange: {self.viewXRange[0], self.viewXRange[1]}')
         self.viewBox.setXRange(self.viewXRange[0], self.viewXRange[1])
-        
 
 class MapOfDatasets():
     """Global dictionary of Datasets, provides safe methods to add and remove 
@@ -458,27 +465,35 @@ class MapOfDatasets():
         if name in MapOfDatasets.dtsDict:
             printv('Need to remove '+name)
             MapOfDatasets.remove(name)
-        printv('MapOfDatasets.add '+str((name, adoPars)))
+        print('MapOfDatasets.add '+str((name, adoPars)))
         for i, token in enumerate(adoPars.split()):
-            token = pargs.ado+token
+            print(f'token: {i, token}')
+            #token = pargs.ado+token
             dname = f'{name}.{i}'
             pnameAndCount = [];
             alist = token.split(',')
             alist = alist[:2] # we cannot handle more than 2 curves in correlation plot
             if len(alist) == 0:
-                MapOfDatasets.dtsDict[dname] = Dataset(dname,[('',0)])
-                print(f'added dataset {str(MapOfDatasets.dtsDict[dname])}')
+                #MapOfDatasets.dtsDict[dname] = Dataset(dname,[('',0)])
+                #print(f'added dataset {str(MapOfDatasets.dtsDict[dname])}')
+                print(f'Logic error: MapOfDatasets({adoPars})') 
+                sys.exit(1)
             else:
                 alist.reverse()
+                print(f'alist: {alist}')
                 for adoPar in alist:
+                    ap = pargs.ado+adoPar
+                    print(f'>get {ap}, {pargs.ado}')
                     try:
-                        val,ts = get_pv(adoPar) # check if parameter is alive
-                    #if val is None:
-                    #    return 1
+                        valts = get_pv(ap) # check if parameter is alive
+                        if valts is None:
+                            printw('Could not add {ap}')
+                            return 2
                     except Exception as e:
-                        printw(f'could not get parameter {adoPar}: {e}')
+                        printw(f'Exception in getting parameter {ap}: {e}')
                         return 1
-                    newName = adoPar
+                    val,ts = valts
+                    newName = ap
                     try:    count = len(val)
                     except: count = 1
                     pnameAndCount.append((newName,count))
@@ -501,7 +516,7 @@ class CustomViewBox(pg.ViewBox):
         #self.dockName = kwds['name'] # cannot use name due to an issue in demo
         #del kwds['name'] # the name in ViewBox.init fails in demo
         self.dockName = name
-        self.dataset = dataset
+        self.dataset = dataset# master dataset, it defines horizontal axis
         #print('CustomViewBox: '+str(self.dockName))
 
         # call the init method of the parent class
@@ -542,7 +557,7 @@ class CustomViewBox(pg.ViewBox):
         setDatasets = self.menu.addAction('Datasets &Options')
         setDatasets.triggered.connect(self.changed_datasetOptions)
 
-        cursorMenu = self.menu.addMenu('Add Cursor')
+        cursorMenu = self.menu.addMenu('Add &Cursor')
         for cursor in ['Vertical','Horizontal']:
             action = cursorMenu.addAction(cursor)
             action.triggered.connect(partial(self.cursorAction,cursor))
@@ -576,13 +591,13 @@ class CustomViewBox(pg.ViewBox):
         self.menu.addAction(legenAction)
         
         runAction = QW.QWidgetAction(self.menu)
-        runWidget = QW.QCheckBox('&Run')
-        runWidget.setChecked(True)
-        runWidget.stateChanged.connect(lambda x: self.set_run(x))
+        runWidget = QW.QCheckBox('&Stop')
+        runWidget.setChecked(False)
+        runWidget.stateChanged.connect(lambda x: self.set_stop(x))
         runAction.setDefaultWidget(runWidget)
         self.menu.addAction(runAction)
         
-        sleepTimeMenu = self.menu.addMenu('&SleepTime')
+        sleepTimeMenu = self.menu.addMenu('Sleep&Time')
         sleepTimeAction = QW.QWidgetAction(sleepTimeMenu)
         sleepTimeWidget = QW.QDoubleSpinBox()
         sleepTimeWidget.setValue(pargs.sleepTime)
@@ -642,14 +657,16 @@ class CustomViewBox(pg.ViewBox):
             tbl.insertRow(row)
             curveName = dataitem.name()
             printv(f'curveName:{curveName}')
-            adoparName = self.dataset.adoPars[0][0]
+            dataset = MapOfDatasets.dtsDict[curveName]
+            adoparName = dataset.adoPars[0][0]
+            
             printv(f'dataset:{adoparName}')
             item = QW.QTableWidgetItem(adoparName.rsplit(':',1)[1])
             #DNW#item.setTextAlignment(QtCore.Qt.AlignRight)
             tbl.setItem(row, 0, item)
 
             # color button for line
-            colorButton = pg.ColorButton(color=self.dataset.pen.color())
+            colorButton = pg.ColorButton(color=dataset.pen.color())
             colorButton.setObjectName(curveName)
             colorButton.sigColorChanging.connect(lambda x:
               change_plotOption(str(self.sender().objectName()),color=x.color()))
@@ -683,7 +700,7 @@ class CustomViewBox(pg.ViewBox):
             tbl.setCellWidget(row, 4, symbolSizeSlider)
 
             # color button for symbol
-            symbolColorButton = pg.ColorButton(color=self.dataset.pen.color())
+            symbolColorButton = pg.ColorButton(color=dataset.pen.color())
             symbolColorButton.setObjectName(curveName)
             symbolColorButton.sigColorChanging.connect(lambda x:
               change_plotOption(str(self.sender().objectName()),scolor=x.color()))
@@ -696,15 +713,16 @@ class CustomViewBox(pg.ViewBox):
         dtsetName = str(self.sender().objectName())
         symbol = str(self.sender().itemText(x))
         printv('set_symbol for '+dtsetName+' to '+symbol)
+        dataset = MapOfDatasets.dtsDict[dtsetName]
         if symbol != ' ':
-            self.dataset.symbol = symbol
-            if not self.dataset.symbolSize:
-                self.dataset.symbolSize = 4 # default size
-            if not self.dataset.symbolBrush:
-                self.dataset.symbolBrush = self.dataset.pen.color() # symbol color = line color
+            dataset.symbol = symbol
+            if not dataset.symbolSize:
+                dataset.symbolSize = 4 # default size
+            if not dataset.symbolBrush:
+                dataset.symbolBrush = dataset.pen.color() # symbol color = line color
         else:
             # no symbols - remove the scatter plot
-            self.dataset.symbol = None
+            dataset.symbol = None
             pass
             
     def set_label(self,side,labelGui):
@@ -719,11 +737,11 @@ class CustomViewBox(pg.ViewBox):
         print(f'set_legend {state}')
         set_legend(self.dockName, state)
 
-    def set_run(self, state):
+    def set_stop(self, state):
         if state == QtCore.Qt.Checked:
-            gTimer.start(int(pargs.sleepTime*1000))
-        else:
             gTimer.stop()    
+        else:
+            gTimer.start(int(pargs.sleepTime*1000))
 
     def set_sleepTime(self, itemData):
         #print('setting SleepTime to: '+str(itemData))
@@ -733,11 +751,11 @@ class CustomViewBox(pg.ViewBox):
 
     def unzoom(self):
         self.rangestack.pop()
-        try:    lastRange = self.rangestack[-1]
+        try:    viewRange = self.rangestack[-1]
         except:
-            return
-        print(f'>unzoom: {lastRange}')
-        self.setRange(xRange=lastRange, padding=None, update=True, disableAutoRange=True)
+            return        
+        self.setRange(xRange=viewRange[X], yRange=viewRange[Y], padding=None,
+            update=True, disableAutoRange=True)
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 
 def callback(args):
