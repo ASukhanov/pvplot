@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting tool for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v0.4.1 2023-03-16'# Using qtpy, Compliant with liteserver 2.0.0
+__version__ = 'v0.5.0 2023-08-22'# Stripchart mode is working
 
 #TODO: add_curves is not correct for multiple curves
 #TODO: move Add Dataset to Dataset options
@@ -24,6 +24,7 @@ MaxCurvesPerPlot = 10
 gMapOfDocks = {}
 pargs = None
 gMapOfPlotWidgets = {}
+Padding = 0.1
 
 # the --zoom should be handled prior to QtWidgets.QApplication
 for i,argv in enumerate(sys.argv):
@@ -40,6 +41,7 @@ gTimer = QtCore.QTimer()
 gWin = QMainWindow()
 gArea = dockarea.DockArea()
 X,Y = 0,1
+XX,YY = 0,1#TODO:rename XX to X, YY to Y
 Scale,Units = 0,1
 gScaleUnits = [[1,'Sample'],[1,'Count']]
 subscribedParMap = {}
@@ -57,7 +59,7 @@ def _printv(msg, level=0):
     if pargs.verbose is None:
         return
     if len(pargs.verbose) >= level:
-        print((f'DBG{level}_PP@{printTime()()}: '+msg))
+        print((f'DBG{level}_PP@{printTime()}: '+msg))
 def printv(msg):   _printv(msg, 0)
 def printvv(msg):  _printv(msg, 1)
 
@@ -84,15 +86,10 @@ except:
     EPICSAccess = None 
     printw('EPICS devices are not supported on this host')
 try:
-    #from cad_io.liteAccess import Access as LITEAccess
-    try:
-        from liteserver import liteAccess
-    except:
-        printe(f'The github module liteserver is not available, trying to import local module liteserv')
-        from liteserv import liteAccess 
+    import liteaccess as liteAccess 
     LITEAccess = liteAccess.Access
-except:
-    printw('LITE devices are not supported on this host')
+except Exception as e:
+    printw(f'LITE devices are not supported on this host: {e}')
     LITEAccess = None
 try:    
     from cad_io import adoaccess
@@ -102,19 +99,21 @@ except Exception as e:
     ADOAccess = None
 
 def cprint(msg): 
-    #gWidgetConsole.write('#'+msg+'\n')
     print('cprint:'+msg)
 
 gAccess = {'E:':(EPICSAccess,2), 'L:':(LITEAccess,2)}
 def get_pv(adopar:str, prop='value'):
     #printvv(f'>get_pv {adopar}')
     adopar, vslice = split_slice(adopar)
-    a = gAccess.get(adopar[:2], (ADOAccess,0))
+    access = gAccess.get(adopar[:2], (ADOAccess,0))
     access,prefixLength = gAccess.get(adopar[:2], (ADOAccess,0))
+    if access is None:
+        printe(f'No access metod for {adopar}')
+        sys.exit(1)
     try:
         pvTuple = tuple(adopar[prefixLength:].rsplit(':',1))
         rd = access.get(pvTuple)[pvTuple]
-        #print(f'rd:{val}')
+        #print(f'get_pv: {val}')
         val = rd['value']
         try:
             shape = val.shape
@@ -170,7 +169,6 @@ def split_slice(parNameSlice):
         vslice = (r0, r0+1)
     else:
         vslice = (r0, int(vrange[1]))
-    #print(f'vslice: {vslice}')
     return devParSlice[0], vslice
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 
@@ -182,7 +180,7 @@ def new_dock(dataset):
     printv('adding plot: '+str(v))
 
 def close_dock(dname):
-    '''remove datasets and curves and close the dock widget'''
+    """remove datasets and curves and close the dock widget"""
     print('closing dock '+dname)
     for curveName in MapOfDatasets.dtsDict.keys():
         printv('looking: '+curveName)
@@ -195,7 +193,7 @@ def close_dock(dname):
     del gMapOfPlotWidgets[dname]
 
 def update_data():
-    ''' called on QtCore.QTimer() event to update plots.'''
+    """ called on QtCore.QTimer() event to update plots."""
     tstart = timer()
     for curveName,dataset in MapOfDatasets.dtsDict.items():
         curvePars = dataset.adoPars
@@ -214,13 +212,6 @@ def update_data():
                 continue
             else:
                 dataset.timestamp = ts
-            # if gTimestamp:
-                # # update the timestamp only for primary curve
-                # if '.' not in curveName:
-                    # if tstart - dataset.timestampReported > 0.99:
-                        # txt = time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(ts))
-                        # dataset.plotWidget.setTitle(txt+'\t'+curvePars[0][0])
-                        # dataset.timestampReported = tstart
         try:    
             l = len(yd)
             if l == 1: yd = yd[0]
@@ -234,31 +225,34 @@ def update_data():
             x = np.arange(len(yd))*gScaleUnits[X][Scale]
         else: # scrolling or correlation plot
             ptr = dataset.dataPtr
-            dataset.data[0][ptr] = yd
+            dataset.data[YY][ptr] = yd
             if len(curvePars) > 1: 
                 #printv(f'correlation plot: {curvePars[1][0]}')
                 try:
                     v,*_ = get_pv(curvePars[1][0])
                     try:    v = v[0]
                     except: pass 
-                    dataset.data[1][ptr] = v
+                    dataset.data[XX][ptr] = v
                 except Exception as e:
                     printe('no data from '+str(curvePars[1][0]))
             else:
                 # scrolling plot with time scale
-                dataset.data[1][ptr] = ts
+                #print(f'ts: {round(ts,3), round(dataset.viewXRange[1],3)}')
+                if dataset.viewBox and ts > dataset.viewXRange[1]:
+                    dataset.shift_viewXRange()
+                dataset.data[XX][ptr] = ts
             ptr += 1
             dataset.dataPtr = ptr
-            #printv(f'ptr: {ptr,dataset.data[0].shape[0]}')
-            if ptr >= dataset.data[0].shape[0]:
-                #print('adjust')
+            #printv(f'ptr: {ptr,dataset.data[YY].shape[0]}')
+            if ptr >= dataset.data[YY].shape[0]:
                 tmp = dataset.data
-                dataset.data = [np.empty(dataset.data[0].shape[0] * 2),
-                    np.empty(dataset.data[0].shape[0] * 2)]
-                dataset.data[0][:tmp[0].shape[0]] = tmp[0]
-                dataset.data[1][:tmp[1].shape[0]] = tmp[1]
-            x = dataset.data[1][:ptr]
-            y = dataset.data[0][:ptr]
+                dataset.data = [np.empty(dataset.data[YY].shape[0] * 2),
+                    np.empty(dataset.data[YY].shape[0] * 2)]
+                dataset.data[YY][:tmp[YY].shape[0]] = tmp[YY]
+                dataset.data[XX][:tmp[XX].shape[0]] = tmp[XX]
+                #print(f'adjust x from {tmp[XX].shape} to {dataset.data[XX].shape}')
+            x = dataset.data[XX][:ptr]
+            y = dataset.data[YY][:ptr]
         #print(f'symbolSize: {curveName,dataset.symbol,dataset.symbolSize}')
         pen = dataset.pen if dataset.width else None
         #printvv(f'x:{x}\ny:{y}')
@@ -338,17 +332,21 @@ class DateAxis(pg.AxisItem):
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 #````````````````````````````Datasets`````````````````````````````````````````
 class Dataset():
-    ''' dataset storage, keeps everything what is necessary to plot the curve.
-    '''
+    """ dataset storage, keeps everything what is necessary to plot the curve.
+    """
     def __init__(self,name,paramAndCount):
         self.name = name
         self.adoPars = paramAndCount # list of max 2 of (adoPar,count)
-        self.plotItem = None # plotting object PlotCurveItem
+        self.plotItem = None # plotting object PlotDataItem
         self.pen = None # current pen
         self.width = 1 # pen width
         self.timestamp = 0 # latest timestamp
         self.timestampReported = 0 # time of the last title update
         self.plotWidget = None
+        self.viewBox = None
+        # members for stripchart plot
+        self.viewXSize = 9E9# Wed Mar 14 2255 16:00:00
+        self.viewXRange = [0., 9E9]
         
         # plotting options, described in 
         # http://www.pyqtgraph.org/documentation/graphicsItems/plotdataitem.html#pyqtgraph.PlotDataItem
@@ -388,18 +386,19 @@ class Dataset():
         if dock in gMapOfPlotWidgets:
             self.plotWidget = gMapOfPlotWidgets[dock]
         else:
-            viewBox = CustomViewBox(name=dock)             
-            viewBox.setMouseMode(viewBox.RectMode)
+            self.viewBox = CustomViewBox(dock, self)
+            self.viewBox.setMouseMode(self.viewBox.RectMode)
+            self.viewBox.sigRangeChangedManually.connect(self.xrangeChanged)
             printv('adding plotwidget:'+dock)
             #title = self.adoPars[0][0]
             title = None
             if count == 1 and not isCorrelationPlot:
-                self.plotWidget = pg.PlotWidget(title=title, viewBox=viewBox,
+                self.plotWidget = pg.PlotWidget(title=title, viewBox=self.viewBox,
                   axisItems={'bottom':DateAxis(orientation='bottom')})
                 if dock != '#0':
                 	self.plotWidget.setXLink(gMapOfPlotWidgets['#0'])
             else: 
-                self.plotWidget = pg.PlotWidget(title=title, viewBox=viewBox)
+                self.plotWidget = pg.PlotWidget(title=title, viewBox=self.viewBox)
             #self.plotWidget.showGrid(True,True)
             gMapOfPlotWidgets[dock] = self.plotWidget
             gMapOfDocks[dock].addWidget(self.plotWidget)
@@ -409,7 +408,6 @@ class Dataset():
                 self.plotWidget.setLabel('bottom','time', units='date', unitPrefix='')
             else:
                 self.plotWidget.setLabel('bottom',gScaleUnits[X][Units])
-
         rangeMap = {X: (pargs.xrange, self.plotWidget.setXRange),
                     Y: (pargs.yrange, self.plotWidget.setYRange)}
         for axis,v in rangeMap.items():
@@ -419,18 +417,44 @@ class Dataset():
             r = [float(i) for i in v[0].split(':')]
             func(*r)
 
-        if self.plotItem: 
+        if self.plotItem:
             self.plotWidget.addItem(self.plotItem)
+
         self.timestamp = 0.
 
+    def __str__(self):
+        return f'Dataset {self.name}, x: {self.data[XX].shape}'
+
+    def xrangeChanged(self):
+        #self.viewBox.enableAutoRange(axis='x', enable=0.1)
+        self.viewXRange = self.viewBox.viewRange()[X]
+        self.viewXSize = self.viewXRange[1] - self.viewXRange[0]
+        #hrange = self.data[XX][0],self.data[XX][self.dataPtr-1]
+        rstack = self.viewBox.rangestack
+        #rstack.append(hrange)
+        rstack.append(self.viewXRange)
+        if len(rstack) > 10:
+            rstack.pop(0)
+        #print(f'viewRange: {self.viewXRange}, {time.time()}, stack:{rstack}')
+
+    def shift_viewXRange(self):
+        if self.viewBox.state['autoRange'][X]:
+                return
+        dx = self.viewXSize*Padding
+        self.viewXRange[0] += dx
+        self.viewXRange[1] += dx
+        #print(f'>shift_viewXRange: {self.viewXRange[0], self.viewXRange[1]}')
+        self.viewBox.setXRange(self.viewXRange[0], self.viewXRange[1])
+        
+
 class MapOfDatasets():
-    '''Global dictionary of Datasets, provides safe methods to add and remove 
-    the datasets '''
+    """Global dictionary of Datasets, provides safe methods to add and remove 
+    the datasets"""
     dtsDict = {}
     
     def add(name, adoPars):
-        '''add new datasets, the adoPars is the space delimited string of 
-        source ado:parameters.'''
+        """add new datasets, the adoPars is the space delimited string of 
+        source ado:parameters."""
         if name in MapOfDatasets.dtsDict:
             printv('Need to remove '+name)
             MapOfDatasets.remove(name)
@@ -443,6 +467,7 @@ class MapOfDatasets():
             alist = alist[:2] # we cannot handle more than 2 curves in correlation plot
             if len(alist) == 0:
                 MapOfDatasets.dtsDict[dname] = Dataset(dname,[('',0)])
+                print(f'added dataset {str(MapOfDatasets.dtsDict[dname])}')
             else:
                 alist.reverse()
                 for adoPar in alist:
@@ -468,23 +493,26 @@ class MapOfDatasets():
         dataset.plotWidget.removeItem(dataset.plotItem)
         del MapOfDatasets.dtsDict[dataset.name]
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
-#'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+#`````````````````````````````````````````````````````````````````````````````
 class CustomViewBox(pg.ViewBox):
-    ''' defines actions, activated on the right mouse click in the dock
-    '''
-    def __init__(self, **kwds):
-        self.dockName = kwds['name'] # cannot use name due to an issue in demo
-        del kwds['name'] # the name in ViewBox.init fails in demo
-        printv('CustomViewBox: '+str(self.dockName)+', '+str(kwds))
+    """ defines actions, activated on the right mouse click in the dock
+    """
+    def __init__(self, name, dataset):
+        #self.dockName = kwds['name'] # cannot use name due to an issue in demo
+        #del kwds['name'] # the name in ViewBox.init fails in demo
+        self.dockName = name
+        self.dataset = dataset
+        #print('CustomViewBox: '+str(self.dockName))
 
         # call the init method of the parent class
         super(CustomViewBox, self).__init__()
-        # the above is equivalent to:#pg.ViewBox.__init__(self, **kwds)
+        self.setDefaultPadding(0.)# standard is 0.02
 
         # IMPORTANT: menu creation is deferred because it is expensive 
         # and often the user will never see the menu anyway.
         self.menu = None
         self.cursors = set()
+        self.rangestack = [] #stack of view ranges
            
     #v32#def mouseClickEvent(self, ev) removed, due to blank exports
 
@@ -496,9 +524,9 @@ class CustomViewBox(pg.ViewBox):
         return True
 
     def getContextMenus(self, event=None):
-        ''' This method will be called when this item's children want to raise
+        """ This method will be called when this item's children want to raise
         a context menu that includes their parents' menus.
-        '''
+        """
         if self.menu:
             printv('menu exist')
             return self.menu
@@ -506,9 +534,9 @@ class CustomViewBox(pg.ViewBox):
         self.menu = ViewBoxMenu(self)
         self.menu.setTitle(str(self.dockName)+ " options..")
 
-        # reset zoom
-        #resetzoom = self.menu.addAction("&Reset Zoom")
-        #resetzoom.triggered.connect(lambda: self.autoRange())
+        # unzoom last
+        unzoom = self.menu.addAction("&UnZoom")
+        unzoom.triggered.connect(lambda: self.unzoom())
 
         # Datasets options dialog
         setDatasets = self.menu.addAction('Datasets &Options')
@@ -593,7 +621,7 @@ class CustomViewBox(pg.ViewBox):
             cursor.label.setText(str(round(pos,3)))
 
     def changed_datasetOptions(self):
-        '''Dialog Plotting Options'''
+        """Dialog Plotting Options"""
         dlg = QW.QDialog()
         dlg.setWindowTitle("Dataset plotting config")
         dlg.setWindowModality(QtCore.Qt.ApplicationModal)
@@ -614,15 +642,14 @@ class CustomViewBox(pg.ViewBox):
             tbl.insertRow(row)
             curveName = dataitem.name()
             printv(f'curveName:{curveName}')
-            dataset = MapOfDatasets.dtsDict[curveName]
-            adoparName = dataset.adoPars[0][0]
+            adoparName = self.dataset.adoPars[0][0]
             printv(f'dataset:{adoparName}')
             item = QW.QTableWidgetItem(adoparName.rsplit(':',1)[1])
             #DNW#item.setTextAlignment(QtCore.Qt.AlignRight)
             tbl.setItem(row, 0, item)
 
             # color button for line
-            colorButton = pg.ColorButton(color=MapOfDatasets.dtsDict[curveName].pen.color())
+            colorButton = pg.ColorButton(color=self.dataset.pen.color())
             colorButton.setObjectName(curveName)
             colorButton.sigColorChanging.connect(lambda x:
               change_plotOption(str(self.sender().objectName()),color=x.color()))
@@ -656,7 +683,7 @@ class CustomViewBox(pg.ViewBox):
             tbl.setCellWidget(row, 4, symbolSizeSlider)
 
             # color button for symbol
-            symbolColorButton = pg.ColorButton(color=MapOfDatasets.dtsDict[curveName].pen.color())
+            symbolColorButton = pg.ColorButton(color=self.dataset.pen.color())
             symbolColorButton.setObjectName(curveName)
             symbolColorButton.sigColorChanging.connect(lambda x:
               change_plotOption(str(self.sender().objectName()),scolor=x.color()))
@@ -664,21 +691,20 @@ class CustomViewBox(pg.ViewBox):
         dlg.exec_()
 
     def set_symbol(self, x):
-        ''' Change symbol of the scatter plot. The size and color are taken
-        from the curve setting'''
+        """ Change symbol of the scatter plot. The size and color are taken
+        from the curve setting"""
         dtsetName = str(self.sender().objectName())
         symbol = str(self.sender().itemText(x))
         printv('set_symbol for '+dtsetName+' to '+symbol)
-        dataset = MapOfDatasets.dtsDict[dtsetName]
         if symbol != ' ':
-            dataset.symbol = symbol
-            if not dataset.symbolSize:
-                dataset.symbolSize = 4 # default size
-            if not dataset.symbolBrush:
-                dataset.symbolBrush = dataset.pen.color() # symbol color = line color
+            self.dataset.symbol = symbol
+            if not self.dataset.symbolSize:
+                self.dataset.symbolSize = 4 # default size
+            if not self.dataset.symbolBrush:
+                self.dataset.symbolBrush = self.dataset.pen.color() # symbol color = line color
         else:
             # no symbols - remove the scatter plot
-            dataset.symbol = None
+            self.dataset.symbol = None
             pass
             
     def set_label(self,side,labelGui):
@@ -705,6 +731,13 @@ class CustomViewBox(pg.ViewBox):
         gTimer.stop()
         gTimer.start(int(pargs.sleepTime*1000))
 
+    def unzoom(self):
+        self.rangestack.pop()
+        try:    lastRange = self.rangestack[-1]
+        except:
+            return
+        print(f'>unzoom: {lastRange}')
+        self.setRange(xRange=lastRange, padding=None, update=True, disableAutoRange=True)
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 
 def callback(args):
@@ -808,7 +841,6 @@ def main():
 
     # plots for other docks
     if pargs.dock:
-        #print(f'dock:{pargs.dock}')
         for par in pargs.dock:
             dock = par[0][0]
             adopar = par[0][1:].lstrip()
@@ -816,7 +848,6 @@ def main():
             add_curves(dock, adopar)
     else:
         # plots for the main dock
-        #for par in pargs.parms:
         add_curves('#0', pargs.parms)
 
     for dock in gMapOfDocks:
