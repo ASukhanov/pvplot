@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting tool for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v0.5.1 2023-08-23'# CustomViewbox dont need a dataset, scrolling corrected
+__version__ = 'v0.5.2 2023-08-24'# cleanup
 
 #TODO: add_curves is not correct for multiple curves
 #TODO: move Add Dataset to Dataset options
@@ -9,8 +9,8 @@ __version__ = 'v0.5.1 2023-08-23'# CustomViewbox dont need a dataset, scrolling 
 #TODO: add dataset arithmetics
 
 import sys, time, os
+timer = time.perf_counter
 import numpy as np
-from timeit import default_timer as timer
 from qtpy import QtWidgets as QW, QtGui, QtCore
 from qtpy.QtWidgets import QApplication, QMainWindow, QGridLayout
 #, QFileDialog
@@ -41,14 +41,11 @@ gTimer = QtCore.QTimer()
 gWin = QMainWindow()
 gArea = dockarea.DockArea()
 X,Y = 0,1
-XX,YY = 0,1#TODO:rename XX to X, YY to Y
 Scale,Units = 0,1
 gScaleUnits = [[1,'Sample'],[1,'Count']]
 subscribedParMap = {}
 # temporary globals
-#gTimestamp = True # option for plot title timestamping
 gPerfmon = False # option for performance monitoring
-programStartTime = time.time()
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 #````````````````````````````Helper methods```````````````````````````````````
 def printTime(): return time.strftime("%m%d:%H%M%S")
@@ -81,13 +78,14 @@ def prettyDict(rDict, lineLimit=75):
                 r += croppedText(f' {parVals}',lineLimit)+'\n'
     return r
 
-try:    from cad_io import epicsAccess_caproto as EPICSAccess
-except:
+try:    from cad_epics import epics as EPICSAccess
+except Exception as e:
     EPICSAccess = None 
-    printw('EPICS devices are not supported on this host')
+    printw(f'EPICS devices are not supported on this host: {e}')
 try:
     import liteaccess as liteAccess 
     LITEAccess = liteAccess.Access
+    print(f'liteAccess {liteAccess.__version__}')
 except Exception as e:
     printw(f'LITE devices are not supported on this host: {e}')
     LITEAccess = None
@@ -134,7 +132,7 @@ def get_pv(adopar:str, prop='value'):
         return val, ts
     except Exception as e:
         printe(f'Cannot get({pvTuple}): {e}')
-        #sys.exit(1)
+        sys.exit(1)
         return None
 
 def change_plotOption(curveName,color=None,width=None,symbolSize=None,scolor=None):
@@ -226,14 +224,14 @@ def update_data():
         else:
             # the plot is scrolling or correlation plot
             ptr = dataset.dataPtr
-            dataset.data[YY][ptr] = yd
+            dataset.data[Y][ptr] = yd
             if len(curvePars) > 1: 
                 #printv(f'correlation plot: {curvePars[1][0]}')
                 try:
                     v,*_ = get_pv(curvePars[1][0])
                     try:    v = v[0]
                     except: pass 
-                    dataset.data[XX][ptr] = v
+                    dataset.data[X][ptr] = v
                 except Exception as e:
                     printe('no data from '+str(curvePars[1][0]))
             else:
@@ -241,19 +239,19 @@ def update_data():
                 #print(f'ts: {round(ts,3), round(dataset.viewXRange[1],3)}')
                 if dataset.scrolling and ts > dataset.viewXRange[1]:
                     dataset.shift_viewXRange()
-                dataset.data[XX][ptr] = ts
+                dataset.data[X][ptr] = ts
             ptr += 1
             dataset.dataPtr = ptr
-            #print(f'ptr: {ptr,dataset.data[YY].shape[0]}')
-            if ptr >= dataset.data[YY].shape[0]:
+            #print(f'ptr: {ptr,dataset.data[Y].shape[0]}')
+            if ptr >= dataset.data[Y].shape[0]:
                 tmp = dataset.data
-                dataset.data = [np.empty(dataset.data[YY].shape[0] * 2),
-                    np.empty(dataset.data[YY].shape[0] * 2)]
-                dataset.data[YY][:tmp[YY].shape[0]] = tmp[YY]
-                dataset.data[XX][:tmp[XX].shape[0]] = tmp[XX]
-                #print(f'adjust x from {tmp[XX].shape} to {dataset.data[XX].shape}')
-            x = dataset.data[XX][:ptr]
-            y = dataset.data[YY][:ptr]
+                dataset.data = [np.empty(dataset.data[Y].shape[0] * 2),
+                    np.empty(dataset.data[Y].shape[0] * 2)]
+                dataset.data[Y][:tmp[Y].shape[0]] = tmp[Y]
+                dataset.data[X][:tmp[X].shape[0]] = tmp[X]
+                #print(f'adjust x from {tmp[X].shape} to {dataset.data[X].shape}')
+            x = dataset.data[X][:ptr]
+            y = dataset.data[Y][:ptr]
 
         # Plot the dataset
         #print(f'symbolSize: {curveName,dataset.symbol,dataset.symbolSize}')
@@ -372,7 +370,7 @@ class Dataset():
         self.data = [np.empty(initialWidth),np.empty(initialWidth)]# [X,U] data storage
         self.dataPtr = 0
         count = self.adoPars[0][1] #
-        print(f'adoPars,count: {self.adoPars,count}')
+        printv(f'adoPars,count: {self.adoPars,count}')
 
         # create plotItem with proper pen
         lineNumber = 0
@@ -430,7 +428,7 @@ class Dataset():
         self.timestamp = 0.
 
     def __str__(self):
-        return f'Dataset {self.name}, x: {self.data[XX].shape}'
+        return f'Dataset {self.name}, x: {self.data[X].shape}'
 
     def xrangeChanged(self):
         viewRange = self.viewBox.viewRange()
@@ -465,10 +463,7 @@ class MapOfDatasets():
         if name in MapOfDatasets.dtsDict:
             printv('Need to remove '+name)
             MapOfDatasets.remove(name)
-        print('MapOfDatasets.add '+str((name, adoPars)))
         for i, token in enumerate(adoPars.split()):
-            print(f'token: {i, token}')
-            #token = pargs.ado+token
             dname = f'{name}.{i}'
             pnameAndCount = [];
             alist = token.split(',')
@@ -480,10 +475,10 @@ class MapOfDatasets():
                 sys.exit(1)
             else:
                 alist.reverse()
-                print(f'alist: {alist}')
+                #print(f'alist: {alist}')
                 for adoPar in alist:
                     ap = pargs.ado+adoPar
-                    print(f'>get {ap}, {pargs.ado}')
+                    #print(f'>get {ap}, {pargs.ado}')
                     try:
                         valts = get_pv(ap) # check if parameter is alive
                         if valts is None:
@@ -855,7 +850,7 @@ def main():
         gScaleUnits[X] = [info[par]['value'][0], units]
         LITEAccess.subscribe(callback, (hostDev,par))
         subscribedParMap[(hostDev,par)] = [X, units]
-    print(f'SubParMap: {subscribedParMap}')
+    #print(f'SubParMap: {subscribedParMap}')
 
     # plots for other docks
     if pargs.dock:

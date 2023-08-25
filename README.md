@@ -6,10 +6,10 @@ Plotting tool for EPICS PVs, ADO and LITE parameters.
 ![Example of an array plot](docs/pvplot_arrays.png)
 
 ## Examples
-- Correlation plot sinM vs degM: ```pvplot 'simple.test:degM,simple.test:sinM'```
-- Stripchart plot for two PVs: ```pvplot 'simple.test:sinM am_simple.0:sinM'```
-- Two plots, correlation and two-curve stripchart: ```pvplot -#0'simple.test:sinM,am_simple.0:sinM' -#1'simple.test:sinM am_simple.0:sinM'```
-- Sliced array plot of an EPICS PV: ```pvplot 'E:testAPD:scope1:Waveform_RBV[1:500]'```
-- Fast plotting of a LiteServer parameter:  ```pvplot L:acnlin23:dev1:y -s.001```
-- Datasets options: right click on a plot and select 'DataSets Options'
-- Legends can be added by enabling Legend checkbox after right click.
+- Sliced array plot of an EPICS PV: ```pvplot -a'E:testAPD:scope1:' 'Waveform_RBV[1:500]'```
+- Strip chart of analog inputs of a LabJack U3-HV instrument, served by liteLabjack:
+pvplot -a'L:localhost:dev1' 'tempU3 ADC_HV[0] ADC_HV[1] ADC_HV[2] ADC_HV[3] ADC_LV'
+- Fast correlation plot of litePeakSimulator ```pvplot -s.01 -a'L:localhost:dev1' 'x,y'```
+- To change properties of curves: right click on a plot and select 'DataSets Options'
+#TODO:- Two plots, correlation and two-curve stripchart: ```pvplot -#0'simple.test:sinM,am_simple.0:sinM' -#1'simple.test:sinM am_simple.0:sinM'```
+
