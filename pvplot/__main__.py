@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting tool for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v0.5.2 2023-08-24'# cleanup
+__version__ = 'v0.5.3 2023-08-26'# Fix timeout in get_pv
 
 #TODO: add_curves is not correct for multiple curves
 #TODO: move Add Dataset to Dataset options
@@ -49,9 +49,9 @@ gPerfmon = False # option for performance monitoring
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 #````````````````````````````Helper methods```````````````````````````````````
 def printTime(): return time.strftime("%m%d:%H%M%S")
-def printi(msg): print((f'INF_PP@{printTime()}: '+msg))
-def printw(msg): print((f'WRN_PP@{printTime()}: '+msg))
-def printe(msg): print((f'ERR_PP@{printTime()}: '+msg))
+def printi(msg): print((f'INF_PvP@{printTime()}: '+msg))
+def printw(msg): print((f'WRN_PvP@{printTime()}: '+msg))
+def printe(msg): print((f'ERR_PvP@{printTime()}: '+msg))
 def _printv(msg, level=0):
     if pargs.verbose is None:
         return
@@ -101,39 +101,33 @@ def cprint(msg):
 
 gAccess = {'E:':(EPICSAccess,2), 'L:':(LITEAccess,2)}
 def get_pv(adopar:str, prop='value'):
-    #print(f'>get_pv {adopar}')
     adopar, vslice = split_slice(adopar)
     access = gAccess.get(adopar[:2], (ADOAccess,0))
     access,prefixLength = gAccess.get(adopar[:2], (ADOAccess,0))
     if access is None:
         printe(f'No access method for {adopar}')
         sys.exit(1)
+    pvTuple = tuple(adopar[prefixLength:].rsplit(':',1))
+    rd = access.get(pvTuple)[pvTuple]
+    #print(f'get_pv: {val}')
+    val = rd['value']
     try:
-        pvTuple = tuple(adopar[prefixLength:].rsplit(':',1))
-        rd = access.get(pvTuple)[pvTuple]
-        #print(f'get_pv: {val}')
-        val = rd['value']
-        try:
-            shape = val.shape
-            if len(shape) > 2:
-                printe(f'2+dimensional arrays not supported for {dev,par}')
-                return None
-        except:
-            # val does not have attribute shape
-            pass
-        try:
-            ts = rd['timestamp']# EPICS and LITE
-        except: # ADO
-            ts = rd['timestampSeconds'] + rd['timestampNanoSeconds']*1.e-9
-        
-        #printv(f"get_pv {adopar}: {rd['value']} {vslice}")
-        if vslice is not None:
-            val = val[vslice[0]:vslice[1]]
-        return val, ts
-    except Exception as e:
-        printe(f'Cannot get({pvTuple}): {e}')
-        sys.exit(1)
-        return None
+        shape = val.shape
+        if len(shape) > 2:
+            printe(f'2+dimensional arrays not supported for {dev,par}')
+            return None
+    except:
+        # val does not have attribute shape
+        pass
+    try:
+        ts = rd['timestamp']# EPICS and LITE
+    except: # ADO
+        ts = rd['timestampSeconds'] + rd['timestampNanoSeconds']*1.e-9
+    
+    #printv(f"get_pv {adopar}: {rd['value']} {vslice}")
+    if vslice is not None:
+        val = val[vslice[0]:vslice[1]]
+    return val, ts
 
 def change_plotOption(curveName,color=None,width=None,symbolSize=None,scolor=None):
     printv('change_plotOption color,width,size,color: '+str((color,width,symbolSize,scolor)))
@@ -195,7 +189,6 @@ def update_data():
     tstart = timer()
     for curveName,dataset in MapOfDatasets.dtsDict.items():
         curvePars = dataset.adoPars
-        #printvv(f'dataset: {curvePars}')#: {dataset.data}')
         dock = curveName.split('.')[0]
         yd,ts = None,None
         try:
