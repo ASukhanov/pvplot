@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v0.6.0 2023-08-26'# pvplot module separated from __main__
+__version__ = 'v0.6.1 2023-08-27'# pargs.zoomin is supported
 
 #TODO: add_curves is not correct for multiple curves
 #TODO: move Add Dataset to Dataset options
 #TODO: if docks are stripcharts then zooming should be synchronized
 #TODO: add dataset arithmetics
 
-import sys, time
+import sys, os, time
 timer = time.perf_counter
 import numpy as np
 from qtpy import QtWidgets as QW, QtGui, QtCore
@@ -770,26 +770,29 @@ class PVPlot():
     mapOfDocks = {}
     mapOfPlotWidgets = {}
     padding = 0.1
-    qApp = QApplication([])
-
-    qTimer = QtCore.QTimer()
-    qWin = QMainWindow()
-    dockArea = dockarea.DockArea()
-    qWin.setCentralWidget(dockArea)
-    qWin.resize(1000,500)
-    ## Switch to using white background and black foreground
-    pg.setConfigOption('background', 'w')
-    pg.setConfigOption('foreground', 'k')
-
     scaleUnits = [[1,'Sample'],[1,'Count']]
     subscribedParMap = {}
-    # temporary globals
     perfmon = False # option for performance monitoring
     legend = {}# unfortunately we have to keep track of legends
     access = {'E:':(EPICSAccess,2), 'L:':(LITEAccess,2)}
+    qWin = None
+    dockArea = None
 
     def start():
         pargs = PVPlot.pargs
+
+        try:    os.environ["QT_SCALE_FACTOR"] = str(pargs.zoomin)
+        except: pass
+        qApp = QApplication([])
+        qTimer = QtCore.QTimer()
+        PVPlot.qWin = QMainWindow()
+        PVPlot.dockArea = dockarea.DockArea()
+        PVPlot.qWin.setCentralWidget(PVPlot.dockArea)
+        PVPlot.qWin.resize(1000,500)
+        ## Switch to using white background and black foreground
+        pg.setConfigOption('background', 'w')
+        pg.setConfigOption('foreground', 'k')
+
         PVPlot.qWin.setWindowTitle(f'pvplot {pargs.parms}')
 
         # plots for other docks
@@ -821,13 +824,13 @@ class PVPlot():
         update_data()
 
         ## Start a timer to rapidly update the plot in pw
-        PVPlot.qTimer.timeout.connect(update_data)
-        PVPlot.qTimer.start(int(pargs.sleepTime*1000))
+        qTimer.timeout.connect(update_data)
+        qTimer.start(int(pargs.sleepTime*1000))
 
         PVPlot.qWin.show()
         PVPlot.qWin.resize(640,480)
 
         # start GUI
-        PVPlot.qApp.instance().exec_()
+        qApp.instance().exec_()
         print('Application exit')
 
