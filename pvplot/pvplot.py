@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v0.6.1 2023-08-27'# pargs.zoomin is supported
+__version__ = 'v0.6.2 2023-08-29'# do not exit in get_pv
 
 #TODO: add_curves is not correct for multiple curves
 #TODO: move Add Dataset to Dataset options
@@ -82,32 +82,28 @@ def get_pv(adopar:str, prop='value'):
     if access is None:
         printe(f'No access method for {adopar}')
         sys.exit(1)
+
+    pvTuple = tuple(adopar[prefixLength:].rsplit(':',1))
+    rd = access.get(pvTuple)[pvTuple]
+    #print(f'get_pv: {val}')
+    val = rd['value']
     try:
-        pvTuple = tuple(adopar[prefixLength:].rsplit(':',1))
-        rd = access.get(pvTuple)[pvTuple]
-        #print(f'get_pv: {val}')
-        val = rd['value']
-        try:
-            shape = val.shape
-            if len(shape) > 2:
-                printe(f'2+dimensional arrays not supported for {dev,par}')
-                return None
-        except:
-            # val does not have attribute shape
-            pass
-        try:
-            ts = rd['timestamp']# EPICS and LITE
-        except: # ADO
-            ts = rd['timestampSeconds'] + rd['timestampNanoSeconds']*1.e-9
-        
-        #printv(f"get_pv {adopar}: {rd['value']} {vslice}")
-        if vslice is not None:
-            val = val[vslice[0]:vslice[1]]
-        return val, ts
-    except Exception as e:
-        printe(f'Cannot get({pvTuple}): {e}')
-        sys.exit(1)
-        return None
+        shape = val.shape
+        if len(shape) > 2:
+            printe(f'2+dimensional arrays not supported for {dev,par}')
+            return None
+    except:
+        # val does not have attribute shape
+        pass
+    try:
+        ts = rd['timestamp']# EPICS and LITE
+    except: # ADO
+        ts = rd['timestampSeconds'] + rd['timestampNanoSeconds']*1.e-9
+
+    #printv(f"get_pv {adopar}: {rd['value']} {vslice}")
+    if vslice is not None:
+        val = val[vslice[0]:vslice[1]]
+    return val, ts
 
 def change_plotOption(curveName,color=None,width=None,symbolSize=None,scolor=None):
     printv('change_plotOption color,width,size,color: '+str((color,width,symbolSize,scolor)))
@@ -258,11 +254,6 @@ def set_legend(dockName:str, state:bool):
         l = pg.LegendItem((100,60), offset=(70,30))  # args are (size, offset)
         l.setParentItem(widget.graphicsItem())
         PVPlot.legend[dockName] = l
-        '''# it should be a better way to iterate for curves in the widget
-        for curveName,dataset in MapOfDatasets.dtsDict.items():
-            if dockName in curveName:
-                printv('set_legend: '+curveName)
-                l.addItem(dataset.plotItem, curveName)'''
         for item in listOfItems:
             iname = item.name()
             txt = MapOfDatasets.dtsDict[iname].adoPars[0][0]
@@ -355,7 +346,6 @@ class Dataset():
             printv('no dataset - no plotItem')
         else:
             self.plotItem = pg.PlotDataItem(name=name, pen=self.pen)
-            #self.plotItem = pg.PlotCurveItem(name=name, pen=self.pen)
         
         # assign the plotwidget
         if dock in PVPlot.mapOfPlotWidgets:
