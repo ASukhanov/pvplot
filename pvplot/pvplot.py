@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v0.6.2 2023-08-29'# do not exit in get_pv
+__version__ = 'v0.6.3 2023-09-10'# --prefix instead of --ado, error handling
 
+#TODO: if backend times out the gui is not responsive
 #TODO: add_curves is not correct for multiple curves
 #TODO: move Add Dataset to Dataset options
 #TODO: if docks are stripcharts then zooming should be synchronized
@@ -13,7 +14,6 @@ timer = time.perf_counter
 import numpy as np
 from qtpy import QtWidgets as QW, QtGui, QtCore
 from qtpy.QtWidgets import QApplication, QMainWindow, QGridLayout
-#, QFileDialog
 import pyqtgraph as pg
 from pyqtgraph.graphicsItems.ViewBox.ViewBoxMenu import ViewBoxMenu
 from pyqtgraph import dockarea
@@ -85,7 +85,6 @@ def get_pv(adopar:str, prop='value'):
 
     pvTuple = tuple(adopar[prefixLength:].rsplit(':',1))
     rd = access.get(pvTuple)[pvTuple]
-    #print(f'get_pv: {val}')
     val = rd['value']
     try:
         shape = val.shape
@@ -161,7 +160,7 @@ def close_dock(dname):
     del PVPlot.mapOfPlotWidgets[dname]
 
 def update_data():
-    """ called on QtCore.QTimer() event to update plots."""
+    """ called on QtCore.qTimer() event to update plots."""
     tstart = timer()
     for curveName,dataset in MapOfDatasets.dtsDict.items():
         curvePars = dataset.adoPars
@@ -423,6 +422,7 @@ class MapOfDatasets():
     def add(name, adoPars):
         """add new datasets, the adoPars is the space delimited string of 
         source ado:parameters."""
+        printv(f'>MapOfDatasets.add({adoPars})')
         if name in MapOfDatasets.dtsDict:
             printv('Need to remove '+name)
             MapOfDatasets.remove(name)
@@ -440,15 +440,15 @@ class MapOfDatasets():
                 alist.reverse()
                 #print(f'alist: {alist}')
                 for adoPar in alist:
-                    ap = PVPlot.pargs.ado+adoPar
-                    #print(f'>get {ap}, {PVPlot.pargs.ado}')
+                    ap = PVPlot.pargs.prefix+adoPar
                     try:
+                        printv(f'check if {ap}, is alive')
                         valts = get_pv(ap) # check if parameter is alive
                         if valts is None:
                             printw('Could not add {ap}')
                             return 2
                     except Exception as e:
-                        printw(f'Exception in getting parameter {ap}: {e}')
+                        printw(f'Exception in getting parameter {ap}')
                         return 1
                     val,ts = valts
                     newName = ap
@@ -697,15 +697,15 @@ class CustomViewBox(pg.ViewBox):
 
     def set_stop(self, state):
         if state == QtCore.Qt.Checked:
-            PVPlot.qtimer.stop()    
+            PVPlot.qTimer.stop()
         else:
-            PVPlot.qtimer.start(int(PVPlot.pargs.sleepTime*1000))
+            PVPlot.qTimer.start(int(PVPlot.pargs.sleepTime*1000))
 
     def set_sleepTime(self, itemData):
         #print('setting SleepTime to: '+str(itemData))
         PVPlot.pargs.sleepTime = itemData
-        PVPlot.qtimer.stop()
-        PVPlot.qtimer.start(int(PVPlot.pargs.sleepTime*1000))
+        PVPlot.qTimer.stop()
+        PVPlot.qTimer.start(int(PVPlot.pargs.sleepTime*1000))
 
     def unzoom(self):
         self.rangestack.pop()
@@ -732,19 +732,17 @@ def add_curves(dock:str, adopars:str):
     # if dock name is new then create new dock, otherwise extend the 
     # existing one with new curve
     
-    #print('adding plot '+str(dock))
     curves = [x for x in MapOfDatasets.dtsDict]
     docks = [x.split('.')[0] for x in curves]
-    #printv(f'curves,docks:{curves,docks}')
+    printv(f'addcurves curves,docks:{curves,docks}')
     if dock in docks:
-        #print('extending dock '+str(dock))
+        printv('extending dock '+str(dock))
         for i in range(MaxCurvesPerPlot):
             newSlot = dock+'.'+str(i+1)
             if newSlot not in curves: break
         dock = newSlot
-        #print(f'adding new curve {dock}')
     else:
-        #print('adding new plot '+dock)
+        printv('adding new plot '+dock)
         PVPlot.mapOfDocks[dock] = dockarea.Dock(dock, size=(500,200), hideTitle=True)
         if dock == '#0':
             PVPlot.dockArea.addDock(PVPlot.mapOfDocks[dock], 'right', closable=True)
@@ -753,7 +751,7 @@ def add_curves(dock:str, adopars:str):
               'top', PVPlot.mapOfDocks['#0'], closable=True) #TODO:closable does not work
     if MapOfDatasets.add(dock, adopars):
             printe('in add_curves: '+str((dock, adopars)))
-    #printv(f'datasets:{MapOfDatasets.dtsDict.keys()}')
+    printv(f'datasets:{MapOfDatasets.dtsDict.keys()}')
 
 class PVPlot():
     pargs = None
@@ -766,6 +764,7 @@ class PVPlot():
     legend = {}# unfortunately we have to keep track of legends
     access = {'E:':(EPICSAccess,2), 'L:':(LITEAccess,2)}
     qWin = None
+    qTimer = QtCore.QTimer()
     dockArea = None
 
     def start():
@@ -774,7 +773,6 @@ class PVPlot():
         try:    os.environ["QT_SCALE_FACTOR"] = str(pargs.zoomin)
         except: pass
         qApp = QApplication([])
-        qTimer = QtCore.QTimer()
         PVPlot.qWin = QMainWindow()
         PVPlot.dockArea = dockarea.DockArea()
         PVPlot.qWin.setCentralWidget(PVPlot.dockArea)
@@ -795,27 +793,36 @@ class PVPlot():
         else:
             # plots for the main dock
             add_curves('#0', pargs.parms)
+        if len(MapOfDatasets.dtsDict) == 0:
+            printe(f'No datasets created')
+            sys.exit(1)
 
         for dock in PVPlot.mapOfDocks:
             set_legend(str(dock), True)
 
         # Subscriptions. Only LITE system is supported.
         if pargs.xscale is not None:
-            hostDev,par = (pargs.ado[2:-1],pargs.xscale)
-            print(f'subscribing: {hostDev,par}')
+            infrastructure = pargs.prefix[:2]
+            if infrastructure != 'L:':
+                printe(f'The --xcale option is supported only for LITE infrastucture')
+                sys.exit(1)
+            hostDev = pargs.prefix[2:]
+            if hostDev[-1] == ':':
+                hostDev = hostDev[:-1]
+            par = pargs.xscale
+            printv(f'subscribing: {hostDev,par}')
             info = LITEAccess.info((hostDev,par))
-            print(f'info of {hostDev,par}: {info}')
-            units = info[par]['units']
-            scaleUnits[X] = [info[par]['value'][0], units]
+            printv(f'info of {hostDev,par}: {info}')
+            units = info[par].get('units','')
+            PVPlot.scaleUnits[X][1] = units
             LITEAccess.subscribe(callback, (hostDev,par))
-            subscribedParMap[(hostDev,par)] = [X, units]
-        #print(f'SubParMap: {subscribedParMap}')
+            PVPlot.subscribedParMap[(hostDev,par)] = [X, units]
 
         update_data()
 
         ## Start a timer to rapidly update the plot in pw
-        qTimer.timeout.connect(update_data)
-        qTimer.start(int(pargs.sleepTime*1000))
+        PVPlot.qTimer.timeout.connect(update_data)
+        PVPlot.qTimer.start(int(pargs.sleepTime*1000))
 
         PVPlot.qWin.show()
         PVPlot.qWin.resize(640,480)
