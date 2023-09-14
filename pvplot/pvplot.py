@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v0.6.4 2023-09-13'# --prefix instead of --ado, error handling, capped plotting frequency to reduce CPU usage
-
+__version__ = 'v0.6.5 2023-09-14'# unnecessary updates removed
 #TODO: if backend times out the gui is not responsive
 #TODO: add_curves is not correct for multiple curves
 #TODO: move Add Dataset to Dataset options
@@ -235,7 +234,8 @@ class Dataset():
         self.plotItem = None # plotting object PlotDataItem
         self.pen = None # current pen
         self.width = 1 # pen width
-        self.timestamp = 0 # latest timestamp
+        self.lastTimePlotted = 0.
+        self.lastTimeUpdated = 0.
         self.timestampReported = 0 # time of the last title update
         self.plotWidget = None
         self.viewBox = None
@@ -318,7 +318,7 @@ class Dataset():
 
         if self.plotItem:
             self.plotWidget.addItem(self.plotItem)
-        self.timestamp = 0.
+        self.lastTimePlotted = 0.
 
     def __str__(self):
         return f'Dataset {self.name}, x: {self.data[X].shape}'
@@ -345,8 +345,14 @@ class Dataset():
         #print(f'>shift_viewXRange: {self.viewXRange[0], self.viewXRange[1]}')
         self.viewBox.setXRange(self.viewXRange[0], self.viewXRange[1])
 
-    def plot(self, x, y):
+    def plot(self, ts):
         # Plot the dataset
+        if self.lastTimePlotted == ts:
+            return
+        self.lastTimePlotted = ts
+        #print(f'>plot: {self.name,round(ts,3)}')
+        x = self.data[X][:self.dataPtr]
+        y = self.data[Y][:self.dataPtr]
         pen = self.pen if self.width else None
         #printvv(f'x:{x}\ny:{y}')
         self.plotItem.setData(x=x, y=y,
@@ -376,11 +382,13 @@ class Dataset():
             printw(f'Exception getting {curvePars[0][0]}: {e}')
             return
         if ts:
-            if ts == self.timestamp:
-                printv(f'curve {self.name} did not change')
+            if ts == self.lastTimeUpdated:
+                #print(f'curve {self.name} did not change {round(ts,3)}')
+                if time2plot:
+                    self.plot(ts)
                 return
-            else:
-                self.timestamp = ts
+        self.lastTimeUpdated = ts
+        #print(f'update {self.name, round(ts,3), round(self.lastTimePlotted,3)}')
         try:    
             l = len(yd)
             if l == 1: yd = yd[0]
@@ -428,11 +436,9 @@ class Dataset():
                 self.data[Y][:tmp[Y].shape[0]] = tmp[Y]
                 self.data[X][:tmp[X].shape[0]] = tmp[X]
                 #printi(f'adjust {self.name} from {tmp[X].shape} to {self.data[X].shape}')
-            x = self.data[X][:ptr]
-            y = self.data[Y][:ptr]
 
             if time2plot:
-                self.plot(x,y)
+                self.plot(ts)
 
 class MapOfDatasets():
     """Global dictionary of Datasets, provides safe methods to add and remove 
