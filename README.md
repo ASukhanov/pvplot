@@ -1,5 +1,5 @@
 # pvplot
-Package for dynamic plotting of EPICS PVs and [liteServer LDOs](https://github.com/ASukhanov/liteServer) parameters.
+Package for dynamic plotting of EPICS PVs and [liteServer data objects](https://github.com/ASukhanov/liteServer).
 
 ## Examples
 - Sliced array plot of an EPICS PV: ```pvplot -s0.01 -a'E:testAPD:scope1:' 'Waveform_RBV[1:500]'```
