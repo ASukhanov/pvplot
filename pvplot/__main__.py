@@ -15,6 +15,8 @@ def main():
     ,epilog=(f'pvplot: {pvplot.__version__}'))
     parser.add_argument('-a', '--prefix', default='', help=\
       "Prefix, which will be added to all data objects, e.g: 'L:localhost:dev1:'")
+    #TODO:parser.add_argument('-H', '--histogram', help=\
+    #  'Plot the space-separated parameters as histograms')
     parser.add_argument('-s', '--sleepTime', type=float, default=0.1,
       help='sleep time between data delivery [s]')
     parser.add_argument('-v', '--verbose', nargs='*', help=\

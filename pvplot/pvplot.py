@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v0.6.3 2023-09-10'# --prefix instead of --ado, error handling
+__version__ = 'v0.6.4 2023-09-13'# --prefix instead of --ado, error handling, capped plotting frequency to reduce CPU usage
 
 #TODO: if backend times out the gui is not responsive
 #TODO: add_curves is not correct for multiple curves
@@ -24,8 +24,8 @@ X,Y = 0,1
 Scale,Units = 0,1
 #````````````````````````````Helper methods```````````````````````````````````
 def printTime(): return time.strftime("%m%d:%H%M%S")
-def printi(msg): print((f'INF_PP@{printTime()}: '+msg))
-def printw(msg): print((f'WRN_PP@{printTime()}: '+msg))
+def printi(msg): print((f'INFO_PP@{printTime()}: '+msg))
+def printw(msg): print((f'WARN_PP@{printTime()}: '+msg))
 def printe(msg): print((f'ERR_PP@{printTime()}: '+msg))
 def _printv(msg, level=0):
     if PVPlot.pargs.verbose is None:
@@ -162,85 +162,16 @@ def close_dock(dname):
 def update_data():
     """ called on QtCore.qTimer() event to update plots."""
     tstart = timer()
-    for curveName,dataset in MapOfDatasets.dtsDict.items():
-        curvePars = dataset.adoPars
-        #printvv(f'dataset: {curvePars}')#: {dataset.data}')
-        dock = curveName.split('.')[0]
-        yd,ts = None,None
-        try:
-            yd, ts = get_pv(curvePars[0][0])
-        except Exception as e:
-            #printv('got '+str((yd,ts))+', from:'+str(curvePars[0][0])+', except:'+str(e))
-            printw(f'Exception getting {curvePars[0][0]}: {e}')
-            continue
-        if ts:
-            if ts == dataset.timestamp:
-                printv('curve '+curveName+'did not change')
-                continue
-            else:
-                dataset.timestamp = ts
-        try:    
-            l = len(yd)
-            if l == 1: yd = yd[0]
-        except: 
-            l = 1
+    tt = round(time.time(),6)
+    if tt > PVPlot.lastPlotTime + PVPlot.minPlottingPeriod:
+        time2plot = True
+        PVPlot.lastPlotTime = tt + PVPlot.minPlottingPeriod
+    else:
+        time2plot = False
 
-        # Evaluate X and Y arrays
-        if l > 1:
-            # the plot is array plot
-            y = np.array(yd)
-            x = np.arange(len(yd))*PVPlot.scaleUnits[X][Scale]
-        else:
-            # the plot is scrolling or correlation plot
-            ptr = dataset.dataPtr
-            dataset.data[Y][ptr] = yd
-            if len(curvePars) > 1: 
-                #printv(f'correlation plot: {curvePars[1][0]}')
-                try:
-                    v,*_ = get_pv(curvePars[1][0])
-                    try:    v = v[0]
-                    except: pass 
-                    dataset.data[X][ptr] = v
-                except Exception as e:
-                    printe('no data from '+str(curvePars[1][0]))
-            else:
-                # scrolling plot with time scale
-                #print(f'ts: {round(ts,3), round(dataset.viewXRange[1],3)}')
-                if dataset.scrolling and ts > dataset.viewXRange[1]:
-                    dataset.shift_viewXRange()
-                dataset.data[X][ptr] = ts
-            ptr += 1
-            dataset.dataPtr = ptr
-            #print(f'ptr: {ptr,dataset.data[Y].shape[0]}')
-            if ptr >= dataset.data[Y].shape[0]:
-                tmp = dataset.data
-                dataset.data = [np.empty(dataset.data[Y].shape[0] * 2),
-                    np.empty(dataset.data[Y].shape[0] * 2)]
-                dataset.data[Y][:tmp[Y].shape[0]] = tmp[Y]
-                dataset.data[X][:tmp[X].shape[0]] = tmp[X]
-                #print(f'adjust x from {tmp[X].shape} to {dataset.data[X].shape}')
-            x = dataset.data[X][:ptr]
-            y = dataset.data[Y][:ptr]
+    for dataset in MapOfDatasets.dtsDict.values():
+        dataset.update_plot(time2plot)
 
-        # Plot the dataset
-        #print(f'symbolSize: {curveName,dataset.symbol,dataset.symbolSize}')
-        pen = dataset.pen if dataset.width else None
-        #printvv(f'x:{x}\ny:{y}')
-        dataset.plotItem.setData(x=x, y=y,
-            pen = pen,
-            #TODO:connect = dataset.connect,
-            #TODO:shadowPen = dataset.shadowPen,
-            #TODO:fillLevel = dataset.fillLevel,
-            #TODO:fillBrush = dataset.fillBrush,
-            #TODO:stepMode = dataset.stepMode,
-            symbol = dataset.symbol,
-            #TODO:symbolPen = dataset.symbolPen,
-            symbolPen = None,
-            symbolBrush = dataset.symbolBrush,
-            #TODO:symbolBrush = dataset.pen.color(),
-            symbolSize = dataset.symbolSize,
-            #TODO:pxMode = dataset.pxMode,
-        )
     if PVPlot.perfmon:
         v = timer()-tstart
         print('update time:'+str(timer()-tstart))
@@ -329,7 +260,7 @@ class Dataset():
         # ``````````````````` Add plotItem ``````````````````````````````````````
         dock = name.split('.')[0]
         printv('plotItem for: '+str([s for s in self.adoPars])+', name:'+str(dock))
-        initialWidth = 10
+        initialWidth = 16
         self.data = [np.empty(initialWidth),np.empty(initialWidth)]# [X,U] data storage
         self.dataPtr = 0
         count = self.adoPars[0][1] #
@@ -413,6 +344,95 @@ class Dataset():
         self.viewXRange[1] += dx
         #print(f'>shift_viewXRange: {self.viewXRange[0], self.viewXRange[1]}')
         self.viewBox.setXRange(self.viewXRange[0], self.viewXRange[1])
+
+    def plot(self, x, y):
+        # Plot the dataset
+        pen = self.pen if self.width else None
+        #printvv(f'x:{x}\ny:{y}')
+        self.plotItem.setData(x=x, y=y,
+            pen = pen,
+            #TODO:connect = self.connect,
+            #TODO:shadowPen = self.shadowPen,
+            #TODO:fillLevel = self.fillLevel,
+            #TODO:fillBrush = self.fillBrush,
+            #TODO:stepMode = self.stepMode,
+            symbol = self.symbol,
+            #TODO:symbolPen = self.symbolPen,
+            symbolPen = None,
+            symbolBrush = self.symbolBrush,
+            #TODO:symbolBrush = self.pen.color(),
+            symbolSize = self.symbolSize,
+            #TODO:pxMode = self.pxMode,
+        )
+
+    def update_plot(self, time2plot):
+        curvePars = self.adoPars
+        #printvv(f'self: {curvePars}')#: {self.data}')
+        yd,ts = None,None
+        try:
+            yd, ts = get_pv(curvePars[0][0])
+        except Exception as e:
+            #printv('got '+str((yd,ts))+', from:'+str(curvePars[0][0])+', except:'+str(e))
+            printw(f'Exception getting {curvePars[0][0]}: {e}')
+            return
+        if ts:
+            if ts == self.timestamp:
+                printv(f'curve {self.name} did not change')
+                return
+            else:
+                self.timestamp = ts
+        try:    
+            l = len(yd)
+            if l == 1: yd = yd[0]
+        except: 
+            l = 1
+
+        # Evaluate X and Y arrays
+        if l > 1:
+            # the plot is array plot
+            y = np.array(yd)
+            x = np.arange(len(yd))*PVPlot.scaleUnits[X][Scale]
+            self.plot(x,y)
+            return
+        else:
+            # the plot is scrolling or correlation plot
+            ptr = self.dataPtr
+            if ptr >= PVPlot.maxPoints:
+                # do not extent the data buffer, roll it over insted
+                self.data[X] = np.roll(self.data[X],-1)
+                self.data[Y] = np.roll(self.data[Y],-1)
+                ptr -= 1
+            self.data[Y][ptr] = yd
+            if len(curvePars) > 1: 
+                #printv(f'correlation plot: {curvePars[1][0]}')
+                try:
+                    v,*_ = get_pv(curvePars[1][0])
+                    try:    v = v[0]
+                    except: pass 
+                    self.data[X][ptr] = v
+                except Exception as e:
+                    printe('no data from '+str(curvePars[1][0]))
+            else:
+                # scrolling plot with time scale
+                #print(f'ts: {round(ts,3), round(self.viewXRange[1],3)}')
+                if self.scrolling and ts > self.viewXRange[1]:
+                    self.shift_viewXRange()
+                self.data[X][ptr] = ts
+            ptr += 1
+            self.dataPtr = ptr
+            #print(f'ptr: {ptr,self.data[Y].shape[0]}')
+            if (ptr <= PVPlot.maxPoints/2) & (ptr >= self.data[Y].shape[0]):
+                tmp = self.data
+                self.data = [np.empty(self.data[Y].shape[0] * 2),
+                    np.empty(self.data[Y].shape[0] * 2)]
+                self.data[Y][:tmp[Y].shape[0]] = tmp[Y]
+                self.data[X][:tmp[X].shape[0]] = tmp[X]
+                #printi(f'adjust {self.name} from {tmp[X].shape} to {self.data[X].shape}')
+            x = self.data[X][:ptr]
+            y = self.data[Y][:ptr]
+
+            if time2plot:
+                self.plot(x,y)
 
 class MapOfDatasets():
     """Global dictionary of Datasets, provides safe methods to add and remove 
@@ -766,9 +786,13 @@ class PVPlot():
     qWin = None
     qTimer = QtCore.QTimer()
     dockArea = None
+    minPlottingPeriod = 1/10.# the data will not be plotted faster than that limit.
+    lastPlotTime = 0.
+    maxPoints = 1048576# Max number of data points to store.
 
     def start():
         pargs = PVPlot.pargs
+        print(f'pargs: {PVPlot.pargs}')
 
         try:    os.environ["QT_SCALE_FACTOR"] = str(pargs.zoomin)
         except: pass
@@ -830,4 +854,3 @@ class PVPlot():
         # start GUI
         qApp.instance().exec_()
         print('Application exit')
-
