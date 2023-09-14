@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v0.6.5 2023-09-14'# unnecessary updates removed
+__version__ = 'v0.6.6 2023-09-14'# bug fixed with array plotting
 #TODO: if backend times out the gui is not responsive
 #TODO: add_curves is not correct for multiple curves
 #TODO: move Add Dataset to Dataset options
@@ -350,7 +350,7 @@ class Dataset():
         if self.lastTimePlotted == ts:
             return
         self.lastTimePlotted = ts
-        #print(f'>plot: {self.name,round(ts,3)}')
+        #print(f'>plot: {self.name, {self.dataPtr}, round(ts,3)}')
         x = self.data[X][:self.dataPtr]
         y = self.data[Y][:self.dataPtr]
         pen = self.pen if self.width else None
@@ -398,9 +398,10 @@ class Dataset():
         # Evaluate X and Y arrays
         if l > 1:
             # the plot is array plot
-            y = np.array(yd)
-            x = np.arange(len(yd))*PVPlot.scaleUnits[X][Scale]
-            self.plot(x,y)
+            self.data[Y] = np.array(yd)
+            self.data[X] = np.arange(len(yd))*PVPlot.scaleUnits[X][Scale]
+            self.dataPtr = len(yd)
+            self.plot(ts)
             return
         else:
             # the plot is scrolling or correlation plot
