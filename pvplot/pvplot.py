@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v0.6.6 2023-09-14'# bug fixed with array plotting
+__version__ = 'v0.6.7 2023-09-21'# correct correlation plot for vector parameters
 #TODO: if backend times out the gui is not responsive
 #TODO: add_curves is not correct for multiple curves
 #TODO: move Add Dataset to Dataset options
@@ -79,7 +79,7 @@ def get_pv(adopar:str, prop='value'):
     access = PVPlot.access.get(adopar[:2], (ADOAccess,0))
     access,prefixLength = PVPlot.access.get(adopar[:2], (ADOAccess,0))
     if access is None:
-        printe(f'No access method for {adopar}')
+        printe(f'No access method for `{adopar}`')
         sys.exit(1)
 
     pvTuple = tuple(adopar[prefixLength:].rsplit(':',1))
@@ -270,7 +270,7 @@ class Dataset():
         lineNumber = 0
         try: lineNumber = int(name.split('.')[1])
         except: pass
-        isCorrelationPlot = len(self.adoPars) == 2
+        isCorrelationPlot = len(self.adoPars) >= 2
         self.pen = pg.mkPen(lineNumber)                
         if self.adoPars[0][0] == '':
             printv('no dataset - no plotItem')
@@ -287,7 +287,7 @@ class Dataset():
             self.viewBox = CustomViewBox(dock, self)
             self.viewBox.setMouseMode(self.viewBox.RectMode)
             self.viewBox.sigRangeChangedManually.connect(self.xrangeChanged)
-            printv('adding plotwidget:'+dock)
+            printv('Creating new dock:'+dock)
             title = None
             if count == 1 and not isCorrelationPlot:
                 self.plotWidget = pg.PlotWidget(title=title, viewBox=self.viewBox,
@@ -373,9 +373,9 @@ class Dataset():
 
     def update_plot(self, time2plot):
         curvePars = self.adoPars
-        #printvv(f'self: {curvePars}')#: {self.data}')
         yd,ts = None,None
         try:
+            #Limitation: only one (first) curve will be plotted 
             yd, ts = get_pv(curvePars[0][0])
         except Exception as e:
             #printv('got '+str((yd,ts))+', from:'+str(curvePars[0][0])+', except:'+str(e))
@@ -388,6 +388,7 @@ class Dataset():
                     self.plot(ts)
                 return
         self.lastTimeUpdated = ts
+        printv(f'update_plot: {curvePars}')# data:{yd}')
         #print(f'update {self.name, round(ts,3), round(self.lastTimePlotted,3)}')
         try:    
             l = len(yd)
@@ -399,7 +400,12 @@ class Dataset():
         if l > 1:
             # the plot is array plot
             self.data[Y] = np.array(yd)
-            self.data[X] = np.arange(len(yd))*PVPlot.scaleUnits[X][Scale]
+            if len(curvePars) > 1:
+                # use last item as horizontal axis
+                self.data[X],*_ = get_pv(curvePars[-1][0])
+            else:
+                # scaled sample number
+                self.data[X] = np.arange(len(yd))*PVPlot.scaleUnits[X][Scale]
             self.dataPtr = len(yd)
             self.plot(ts)
             return
@@ -413,7 +419,7 @@ class Dataset():
                 ptr -= 1
             self.data[Y][ptr] = yd
             if len(curvePars) > 1: 
-                #printv(f'correlation plot: {curvePars[1][0]}')
+                printv(f'correlation plot: {curvePars[1][0]}')
                 try:
                     v,*_ = get_pv(curvePars[1][0])
                     try:    v = v[0]
@@ -457,7 +463,7 @@ class MapOfDatasets():
             dname = f'{name}.{i}'
             pnameAndCount = [];
             alist = token.split(',')
-            alist = alist[:2] # we cannot handle more than 2 curves in correlation plot
+            #alist = alist[:2] # we cannot handle more than 2 curves in correlation plot
             if len(alist) == 0:
                 #MapOfDatasets.dtsDict[dname] = Dataset(dname,[('',0)])
                 #print(f'added dataset {str(MapOfDatasets.dtsDict[dname])}')
@@ -465,7 +471,6 @@ class MapOfDatasets():
                 sys.exit(1)
             else:
                 alist.reverse()
-                #print(f'alist: {alist}')
                 for adoPar in alist:
                     ap = PVPlot.pargs.prefix+adoPar
                     try:
@@ -482,9 +487,9 @@ class MapOfDatasets():
                     try:    count = len(val)
                     except: count = 1
                     pnameAndCount.append((newName,count))
-                #printv('adding '+str(pnameAndCount)+' to datasets['+dname+']')
+                printv('adding '+str(pnameAndCount)+' to datasets['+dname+']')
                 MapOfDatasets.dtsDict[dname] = Dataset(dname,pnameAndCount)
-        printv(f'MapOfDatasets: {[(k,v.name) for k,v in  MapOfDatasets.dtsDict.items()]}')
+        printv(f'MapOfDatasets: {[(k,v.adoPars) for k,v in  MapOfDatasets.dtsDict.items()]}')
         return 0
     
     def remove(name):
@@ -745,15 +750,16 @@ class CustomViewBox(pg.ViewBox):
 
 def callback(args):
     #print(f'cb: {args}')
-    for hostDev, pardict in args.items():
-        for par in pardict:
-            try:
-                axis,units = PVPlot.subscribedParMap[(hostDev,par)]
-            except:
-                continue
-            scale = pardict[par]['value'][0]
-            print(f'axis={axis}, units={units}, scale={scale}')
-            PVPlot.scaleUnits[axis][Scale] = scale
+    for hostDevPar, pardict in args.items():
+        try:
+            axis,units = PVPlot.subscribedParMap[(hostDevPar)]
+        except Exception as e:
+            printw(f'callback exception for {hostDevPar}: {e}')
+            #print(f'map: {PVPlot.subscribedParMap}')
+            continue
+        scale = pardict['value'][0]
+        printv(f'axis={axis}, units={units}, scale={scale}')
+        PVPlot.scaleUnits[axis][Scale] = scale
 
 def add_curves(dock:str, adopars:str):        
     # if dock name is new then create new dock, otherwise extend the 
@@ -761,7 +767,7 @@ def add_curves(dock:str, adopars:str):
     
     curves = [x for x in MapOfDatasets.dtsDict]
     docks = [x.split('.')[0] for x in curves]
-    printv(f'addcurves curves,docks:{curves,docks}')
+    printv(f'>addcurves curves,docks:{curves,docks}')
     if dock in docks:
         printv('extending dock '+str(dock))
         for i in range(MaxCurvesPerPlot):
@@ -769,7 +775,7 @@ def add_curves(dock:str, adopars:str):
             if newSlot not in curves: break
         dock = newSlot
     else:
-        printv('adding new plot '+dock)
+        printv('adding new dock '+dock)
         PVPlot.mapOfDocks[dock] = dockarea.Dock(dock, size=(500,200), hideTitle=True)
         if dock == '#0':
             PVPlot.dockArea.addDock(PVPlot.mapOfDocks[dock], 'right', closable=True)
@@ -778,7 +784,6 @@ def add_curves(dock:str, adopars:str):
               'top', PVPlot.mapOfDocks['#0'], closable=True) #TODO:closable does not work
     if MapOfDatasets.add(dock, adopars):
             printe('in add_curves: '+str((dock, adopars)))
-    printv(f'datasets:{MapOfDatasets.dtsDict.keys()}')
 
 class PVPlot():
     pargs = None
@@ -833,9 +838,10 @@ class PVPlot():
 
         # Subscriptions. Only LITE system is supported.
         if pargs.xscale is not None:
+            print(f'infra: {pargs.prefix}')
             infrastructure = pargs.prefix[:2]
             if infrastructure != 'L:':
-                printe(f'The --xcale option is supported only for LITE infrastucture')
+                printe(f'The --xscale option is supported only for LITE infrastucture')
                 sys.exit(1)
             hostDev = pargs.prefix[2:]
             if hostDev[-1] == ':':
