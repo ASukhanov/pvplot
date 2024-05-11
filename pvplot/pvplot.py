@@ -388,7 +388,7 @@ class Dataset():
                     self.plot(ts)
                 return
         self.lastTimeUpdated = ts
-        printv(f'update_plot: {curvePars}')# data:{yd}')
+        #printv(f'update_plot: {curvePars}, data:{yd}')
         #print(f'update {self.name, round(ts,3), round(self.lastTimePlotted,3)}')
         try:    
             l = len(yd)
@@ -398,7 +398,7 @@ class Dataset():
 
         # Evaluate X and Y arrays
         if l > 1:
-            # the plot is array plot
+            #printv('Array plot')
             self.data[Y] = np.array(yd)
             if len(curvePars) > 1:
                 # use last item as horizontal axis
@@ -413,12 +413,13 @@ class Dataset():
             # the plot is scrolling or correlation plot
             ptr = self.dataPtr
             if ptr >= PVPlot.maxPoints:
-                # do not extent the data buffer, roll it over insted
+                # do not extent the data buffer, roll it over instead
                 self.data[X] = np.roll(self.data[X],-1)
                 self.data[Y] = np.roll(self.data[Y],-1)
                 ptr -= 1
             self.data[Y][ptr] = yd
-            if len(curvePars) > 1: 
+            if len(curvePars) > 1:
+                #print('Correlation Plot') 
                 printv(f'correlation plot: {curvePars[1][0]}')
                 try:
                     v,*_ = get_pv(curvePars[1][0])
