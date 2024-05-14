@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v0.6.7 2023-09-21'# correct correlation plot for vector parameters
+__version__ = 'v0.6.8 2024-05-13'# Implemented: Show/hide statistics
 #TODO: if backend times out the gui is not responsive
 #TODO: add_curves is not correct for multiple curves
 #TODO: move Add Dataset to Dataset options
@@ -17,6 +17,7 @@ import pyqtgraph as pg
 from pyqtgraph.graphicsItems.ViewBox.ViewBoxMenu import ViewBoxMenu
 from pyqtgraph import dockarea
 from functools import partial
+from collections import deque
 
 #````````````````````````````Constants````````````````````````````````````````
 X,Y = 0,1
@@ -168,8 +169,26 @@ def update_data():
     else:
         time2plot = False
 
+    statistics = []
     for dataset in MapOfDatasets.dtsDict.values():
         dataset.update_plot(time2plot)
+        if dataset.dataChanged:
+            try:
+                if PVPlot.statisticsWindow.isVisible:
+                    s = dataset.get_statistics()
+                    if len(s) != 0:
+                        statistics.append(s)
+            except Exception as e:
+                #printw(f'in update_data(): {e}')
+                pass
+
+    if len(statistics) != 0:
+        #print(f'Statistics: {statistics}')
+        txt = ''
+        for stat in statistics:
+            for key,value in stat.items():
+                txt += f'{key}:{value}\n'
+        PVPlot.statisticsWindow.label.setText(txt)
 
     if PVPlot.perfmon:
         v = timer()-tstart
@@ -256,6 +275,7 @@ class Dataset():
         self.symbolBrush = None
         self.symbolSize = None
         self.pxMode = None
+        self.statistics = {}
 
         # ``````````````````` Add plotItem ``````````````````````````````````````
         dock = name.split('.')[0]
@@ -281,6 +301,7 @@ class Dataset():
         if dock in PVPlot.mapOfPlotWidgets:
             # dock already exist, use the existing plotwidget
             self.plotWidget = PVPlot.mapOfPlotWidgets[dock]
+            self.viewBox = self.plotWidget.getViewBox()
         else:
             # new dock need to be created
             # create vewBox with plotwidget
@@ -328,10 +349,9 @@ class Dataset():
         self.viewXRange = viewRange[X]
         viewlimit = self.viewXRange[1]
         self.viewXSize = viewlimit - self.viewXRange[0]
-        rstack = self.viewBox.rangestack
-        rstack.append(viewRange)
-        if len(rstack) > 10:
-            rstack.pop(0)
+        self.viewBox.rangestack.append(viewRange)
+        self.viewBox.unzooming = False
+        #print(f'>rangestack {len(self.viewBox.rangestack)}')
         self.scrolling = (self.viewBox is not None)\
             and viewlimit > self.data[X][self.dataPtr-1]
         #print(f'scrolling: {self.scrolling}')
@@ -383,10 +403,12 @@ class Dataset():
             return
         if ts:
             if ts == self.lastTimeUpdated:
+                self.dataChanged = False
                 #print(f'curve {self.name} did not change {round(ts,3)}')
                 if time2plot:
                     self.plot(ts)
                 return
+        self.dataChanged = True
         self.lastTimeUpdated = ts
         #printv(f'update_plot: {curvePars}, data:{yd}')
         #print(f'update {self.name, round(ts,3), round(self.lastTimePlotted,3)}')
@@ -408,7 +430,6 @@ class Dataset():
                 self.data[X] = np.arange(len(yd))*PVPlot.scaleUnits[X][Scale]
             self.dataPtr = len(yd)
             self.plot(ts)
-            return
         else:
             # the plot is scrolling or correlation plot
             ptr = self.dataPtr
@@ -447,6 +468,30 @@ class Dataset():
 
             if time2plot:
                 self.plot(ts)
+
+    def get_statistics(self):
+        npt = self.dataPtr
+        #print(f'viewRange={self.viewBox.viewRange()}')
+        xr = self.viewBox.viewRange()[X]
+        for ileft in range(npt):
+            if self.data[X][ileft] > xr[0]:
+                break
+        #print(f'last={self.data[X][npt-2], self.data[X][npt-1]}')
+        for i in range(npt):
+            if self.data[X][npt-i-1] < xr[1]:
+                break
+        iright = npt -i
+        #print(f'il,ir={ileft,iright}')
+        if not self.dataChanged:
+            return {}
+        parname = self.adoPars[0][0].rsplit(':',1)[1]
+        r = {parname:{}}
+        rp = r[parname]
+        rp['xrange'] = (ileft,iright)
+        rp['mean'] = np.mean(self.data[Y][ileft:iright]).astype('f4')
+        rp['std'] = np.std(self.data[Y][ileft:iright]).astype('f4')
+        #print(f'<get_statistics {r}')
+        return r
 
 class MapOfDatasets():
     """Global dictionary of Datasets, provides safe methods to add and remove 
@@ -498,6 +543,21 @@ class MapOfDatasets():
         dataset = MapOfDatasets.dtsDict[name]
         dataset.plotWidget.removeItem(dataset.plotItem)
         del MapOfDatasets.dtsDict[dataset.name]
+
+class PopupWindow(QW.QWidget):
+    """ This "window" is a QWidget. If it has no parent, it
+    will appear as a free-floating window as we want.
+    Note: The created window will not be closed on app exit.
+    To make it happen, the MainWindow should call close this widget in its closeEvent() 
+    """
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle('Statistics')
+        layout = QW.QVBoxLayout()
+        self.label = QW.QLabel()
+        layout.addWidget(self.label)
+        self.setLayout(layout)
+    
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 #`````````````````````````````````````````````````````````````````````````````
 class CustomViewBox(pg.ViewBox):
@@ -518,7 +578,7 @@ class CustomViewBox(pg.ViewBox):
         # and often the user will never see the menu anyway.
         self.menu = None
         self.cursors = set()
-        self.rangestack = [] #stack of view ranges
+        self.rangestack = deque([],10) #stack of 10 of view ranges
            
     #v32#def mouseClickEvent(self, ev) removed, due to blank exports
 
@@ -547,6 +607,9 @@ class CustomViewBox(pg.ViewBox):
         # Datasets options dialog
         setDatasets = self.menu.addAction('Datasets &Options')
         setDatasets.triggered.connect(self.changed_datasetOptions)
+
+        _statistics = self.menu.addAction('Show/Hide Statistics')
+        _statistics.triggered.connect(self.show_statistics)
 
         cursorMenu = self.menu.addMenu('Add &Cursor')
         for cursor in ['Vertical','Horizontal']:
@@ -741,12 +804,28 @@ class CustomViewBox(pg.ViewBox):
         PVPlot.qTimer.start(int(PVPlot.pargs.sleepTime*1000))
 
     def unzoom(self):
-        self.rangestack.pop()
-        try:    viewRange = self.rangestack[-1]
-        except:
-            return        
+        print('>unzoom')
+        try:
+            if not self.unzooming:
+                self.rangestack.pop()
+            self.unzooming = True
+            viewRange = self.rangestack.pop()
+        except IndexError:
+            #printw(f'nothing to unzoom')
+            self.enableAutoRange()
+            return
+        #print(f'<rangestack {len(self.rangestack)}')
         self.setRange(xRange=viewRange[X], yRange=viewRange[Y], padding=None,
             update=True, disableAutoRange=True)
+
+    def show_statistics(self):
+        if PVPlot.statisticsWindow is None:
+           PVPlot.statisticsWindow = PopupWindow()
+        if PVPlot.statisticsWindow.isVisible():
+            PVPlot.statisticsWindow.hide()
+        else:
+            PVPlot.statisticsWindow.label.setText(f'Statistics will be shown')
+            PVPlot.statisticsWindow.show()
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 
 def callback(args):
@@ -802,6 +881,7 @@ class PVPlot():
     minPlottingPeriod = 1/10.# the data will not be plotted faster than that limit.
     lastPlotTime = 0.
     maxPoints = 1048576# Max number of data points to store.
+    statisticsWindow = None
 
     def start():
         pargs = PVPlot.pargs
