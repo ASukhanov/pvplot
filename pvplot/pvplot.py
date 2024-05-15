@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v0.6.8 2024-05-13'# Implemented: Show/hide statistics
+__version__ = 'v0.6.8 2024-05-15'# Fixed missed exceptions in Qt, Implemented: statistics, yProjection
 #TODO: if backend times out the gui is not responsive
 #TODO: add_curves is not correct for multiple curves
 #TODO: move Add Dataset to Dataset options
@@ -18,6 +18,7 @@ from pyqtgraph.graphicsItems.ViewBox.ViewBoxMenu import ViewBoxMenu
 from pyqtgraph import dockarea
 from functools import partial
 from collections import deque
+import traceback
 
 #````````````````````````````Constants````````````````````````````````````````
 X,Y = 0,1
@@ -169,25 +170,28 @@ def update_data():
     else:
         time2plot = False
 
-    statistics = []
+    statistics = {}
     for dataset in MapOfDatasets.dtsDict.values():
         dataset.update_plot(time2plot)
         if dataset.dataChanged:
+            if PVPlot.statisticsWindow is None:
+                continue
             try:
-                if PVPlot.statisticsWindow.isVisible:
+                if PVPlot.statisticsWindow.isVisible():
                     s = dataset.get_statistics()
                     if len(s) != 0:
-                        statistics.append(s)
+                        statistics.update(s)
             except Exception as e:
-                #printw(f'in update_data(): {e}')
+                printw(f'in update_data(): {e}')
                 pass
 
     if len(statistics) != 0:
         #print(f'Statistics: {statistics}')
-        txt = ''
-        for stat in statistics:
-            for key,value in stat.items():
-                txt += f'{key}:{value}\n'
+        txt = 'Parm,\tRange,\tMean,\t\tSTD\n'
+        for key,v in statistics.items():
+            #for key,value in stat.items():
+            #    txt += f'{key}:{value}\n'
+            txt += f'{key},\t{v["xrange"]},\t{v["mean"]},\t{v["std"]}\n'
         PVPlot.statisticsWindow.label.setText(txt)
 
     if PVPlot.perfmon:
@@ -276,6 +280,7 @@ class Dataset():
         self.symbolSize = None
         self.pxMode = None
         self.statistics = {}
+        self.yProjectionFlag = False
 
         # ``````````````````` Add plotItem ``````````````````````````````````````
         dock = name.split('.')[0]
@@ -469,7 +474,18 @@ class Dataset():
             if time2plot:
                 self.plot(ts)
 
-    def get_statistics(self):
+        if self.yProjectionFlag:
+            ileft,iright = self._visibleRange()
+            #print(f'projection {self.name}[{ileft,iright}]')
+            h = np.histogram(self.data[Y][ileft:iright],100)
+            if PVPlot.yProjectionWindow.isVisible():
+                PVPlot.yProjectionPlotItem.setData(h[1],h[0],pen='b',stepMode=True)
+            else:
+                #printw(f'yProjection of {self.name} is enabled, but window is not visible')
+                self.yProjectionFlag = False
+            #print(f'<projected {self.name}')
+
+    def _visibleRange(self):
         npt = self.dataPtr
         #print(f'viewRange={self.viewBox.viewRange()}')
         xr = self.viewBox.viewRange()[X]
@@ -481,6 +497,10 @@ class Dataset():
             if self.data[X][npt-i-1] < xr[1]:
                 break
         iright = npt -i
+        return ileft,iright
+
+    def get_statistics(self):
+        ileft,iright = self._visibleRange()
         #print(f'il,ir={ileft,iright}')
         if not self.dataChanged:
             return {}
@@ -493,6 +513,11 @@ class Dataset():
         #print(f'<get_statistics {r}')
         return r
 
+    def get_visibleData(self):
+        ileft,iright = self._visibleRange()
+        r = (self.data[X][ileft:iright], self.data[Y][ileft:iright])
+        return r
+        
 class MapOfDatasets():
     """Global dictionary of Datasets, provides safe methods to add and remove 
     the datasets"""
@@ -555,9 +580,9 @@ class PopupWindow(QW.QWidget):
         self.setWindowTitle('Statistics')
         layout = QW.QVBoxLayout()
         self.label = QW.QLabel()
+        self.label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         layout.addWidget(self.label)
         self.setLayout(layout)
-    
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 #`````````````````````````````````````````````````````````````````````````````
 class CustomViewBox(pg.ViewBox):
@@ -610,6 +635,9 @@ class CustomViewBox(pg.ViewBox):
 
         _statistics = self.menu.addAction('Show/Hide Statistics')
         _statistics.triggered.connect(self.show_statistics)
+
+        _yProjection = self.menu.addAction('Show/Hide yProjection')
+        _yProjection.triggered.connect(self.show_yProjection)
 
         cursorMenu = self.menu.addMenu('Add &Cursor')
         for cursor in ['Vertical','Horizontal']:
@@ -820,12 +848,26 @@ class CustomViewBox(pg.ViewBox):
 
     def show_statistics(self):
         if PVPlot.statisticsWindow is None:
-           PVPlot.statisticsWindow = PopupWindow()
+            PVPlot.statisticsWindow = PopupWindow()
         if PVPlot.statisticsWindow.isVisible():
             PVPlot.statisticsWindow.hide()
         else:
             PVPlot.statisticsWindow.label.setText(f'Statistics will be shown')
             PVPlot.statisticsWindow.show()
+
+    def show_yProjection(self):
+        if PVPlot.yProjectionWindow is None:
+            PVPlot.yProjectionWindow = pg.PlotWidget()
+            PVPlot.yProjectionPlotItem = pg.PlotDataItem()
+            PVPlot.yProjectionWindow.addItem(PVPlot.yProjectionPlotItem)
+        if PVPlot.yProjectionWindow.isVisible():
+            PVPlot.yProjectionWindow.hide()
+            self.dataset.yProjectionFlag = False
+        else:
+            PVPlot.yProjectionWindow.setWindowTitle(
+                f'Vertical projection of {self.dataset.adoPars[0][0].rsplit(":",1)[1]}')
+            PVPlot.yProjectionWindow.show()
+            self.dataset.yProjectionFlag = True
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 
 def callback(args):
@@ -865,6 +907,14 @@ def add_curves(dock:str, adopars:str):
     if MapOfDatasets.add(dock, adopars):
             printe('in add_curves: '+str((dock, adopars)))
 
+def excepthook(exc_type, exc_value, exc_tb):
+    """To uncover exceptions, missed in Qt"""
+    tb = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    print("error caught!:")
+    print("error message:\n", tb)
+    QtWidgets.QApplication.quit()
+    # or QtWidgets.QApplication.exit(0)
+
 class PVPlot():
     pargs = None
     mapOfDocks = {}
@@ -882,6 +932,8 @@ class PVPlot():
     lastPlotTime = 0.
     maxPoints = 1048576# Max number of data points to store.
     statisticsWindow = None
+    yProjectionWindow = None
+    yProjectionPlotItem = None
 
     def start():
         pargs = PVPlot.pargs
@@ -936,6 +988,8 @@ class PVPlot():
             LITEAccess.subscribe(callback, (hostDev,par))
             PVPlot.subscribedParMap[(hostDev,par)] = [X, units]
 
+        sys.excepthook = excepthook
+
         update_data()
 
         ## Start a timer to rapidly update the plot in pw
@@ -946,5 +1000,6 @@ class PVPlot():
         PVPlot.qWin.resize(640,480)
 
         # start GUI
-        qApp.instance().exec_()
-        print('Application exit')
+        ret = qApp.instance().exec_()
+        print('Application exited')
+        sys.exit(ret)
