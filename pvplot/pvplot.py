@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v0.6.8 2024-05-15'# Fixed missed exceptions in Qt, Implemented: statistics, yProjection
+__version__ = 'v0.6.9 2024-05-16'# statistics and yProjection are static
 #TODO: if backend times out the gui is not responsive
-#TODO: add_curves is not correct for multiple curves
 #TODO: move Add Dataset to Dataset options
-#TODO: if docks are stripcharts then zooming should be synchronized
 #TODO: add dataset arithmetics
 
 import sys, os, time
@@ -29,9 +27,7 @@ def printi(msg): print((f'INFO_PP@{printTime()}: '+msg))
 def printw(msg): print((f'WARN_PP@{printTime()}: '+msg))
 def printe(msg): print((f'ERR_PP@{printTime()}: '+msg))
 def _printv(msg, level=0):
-    if PVPlot.pargs.verbose is None:
-        return
-    if len(PVPlot.pargs.verbose) >= level:
+    if PVPlot.pargs.verbose > level:
         print((f'DBG{level}_PP@{printTime()}: '+msg))
 def printv(msg):   _printv(msg, 0)
 def printvv(msg):  _printv(msg, 1)
@@ -170,33 +166,27 @@ def update_data():
     else:
         time2plot = False
 
-    statistics = {}
     for dataset in MapOfDatasets.dtsDict.values():
         dataset.update_plot(time2plot)
         if dataset.dataChanged:
+            printvv(f'updating {dataset.adoPars}')
             if PVPlot.statisticsWindow is None:
                 continue
-            try:
-                if PVPlot.statisticsWindow.isVisible():
-                    s = dataset.get_statistics()
-                    if len(s) != 0:
-                        statistics.update(s)
-            except Exception as e:
-                printw(f'in update_data(): {e}')
-                pass
-
-    if len(statistics) != 0:
-        #print(f'Statistics: {statistics}')
-        txt = 'Parm,\tRange,\tMean,\t\tSTD\n'
-        for key,v in statistics.items():
-            #for key,value in stat.items():
-            #    txt += f'{key}:{value}\n'
-            txt += f'{key},\t{v["xrange"]},\t{v["mean"]},\t{v["std"]}\n'
-        PVPlot.statisticsWindow.label.setText(txt)
 
     if PVPlot.perfmon:
         v = timer()-tstart
         print('update time:'+str(timer()-tstart))
+
+def get_statistics():
+    statistics = {}
+    for dataset in MapOfDatasets.dtsDict.values():
+        s = dataset.get_statistics()
+        if len(s) != 0:
+            statistics.update(s)
+    txt = 'Parm,\tRange,\tMean,\t\tSTD\n'
+    for key,v in statistics.items():
+        txt += f'{key},\t{v["xrange"]},\t{v["mean"]},\t{v["std"]}\n'
+    return txt
 
 def set_legend(dockName:str, state:bool):
     if state: # legend enabled
@@ -280,7 +270,6 @@ class Dataset():
         self.symbolSize = None
         self.pxMode = None
         self.statistics = {}
-        self.yProjectionFlag = False
 
         # ``````````````````` Add plotItem ``````````````````````````````````````
         dock = name.split('.')[0]
@@ -474,17 +463,6 @@ class Dataset():
             if time2plot:
                 self.plot(ts)
 
-        if self.yProjectionFlag:
-            ileft,iright = self._visibleRange()
-            #print(f'projection {self.name}[{ileft,iright}]')
-            h = np.histogram(self.data[Y][ileft:iright],100)
-            if PVPlot.yProjectionWindow.isVisible():
-                PVPlot.yProjectionPlotItem.setData(h[1],h[0],pen='b',stepMode=True)
-            else:
-                #printw(f'yProjection of {self.name} is enabled, but window is not visible')
-                self.yProjectionFlag = False
-            #print(f'<projected {self.name}')
-
     def _visibleRange(self):
         npt = self.dataPtr
         #print(f'viewRange={self.viewBox.viewRange()}')
@@ -499,18 +477,19 @@ class Dataset():
         iright = npt -i
         return ileft,iright
 
+    def show_yProjection(self):
+        ileft,iright = self._visibleRange()
+        h = np.histogram(self.data[Y][ileft:iright],100)
+        PVPlot.yProjectionPlotItem.setData(h[1],h[0],pen='b',stepMode=True)
+
     def get_statistics(self):
         ileft,iright = self._visibleRange()
-        #print(f'il,ir={ileft,iright}')
-        if not self.dataChanged:
-            return {}
         parname = self.adoPars[0][0].rsplit(':',1)[1]
         r = {parname:{}}
         rp = r[parname]
         rp['xrange'] = (ileft,iright)
         rp['mean'] = np.mean(self.data[Y][ileft:iright]).astype('f4')
         rp['std'] = np.std(self.data[Y][ileft:iright]).astype('f4')
-        #print(f'<get_statistics {r}')
         return r
 
     def get_visibleData(self):
@@ -603,6 +582,7 @@ class CustomViewBox(pg.ViewBox):
         # and often the user will never see the menu anyway.
         self.menu = None
         self.cursors = set()
+        self.unzooming = False
         self.rangestack = deque([],10) #stack of 10 of view ranges
            
     #v32#def mouseClickEvent(self, ev) removed, due to blank exports
@@ -633,10 +613,10 @@ class CustomViewBox(pg.ViewBox):
         setDatasets = self.menu.addAction('Datasets &Options')
         setDatasets.triggered.connect(self.changed_datasetOptions)
 
-        _statistics = self.menu.addAction('Show/Hide Statistics')
+        _statistics = self.menu.addAction('Show Statistics')
         _statistics.triggered.connect(self.show_statistics)
 
-        _yProjection = self.menu.addAction('Show/Hide yProjection')
+        _yProjection = self.menu.addAction('Show yProjection')
         _yProjection.triggered.connect(self.show_yProjection)
 
         cursorMenu = self.menu.addMenu('Add &Cursor')
@@ -832,7 +812,7 @@ class CustomViewBox(pg.ViewBox):
         PVPlot.qTimer.start(int(PVPlot.pargs.sleepTime*1000))
 
     def unzoom(self):
-        print('>unzoom')
+        #print('>unzoom')
         try:
             if not self.unzooming:
                 self.rangestack.pop()
@@ -849,25 +829,21 @@ class CustomViewBox(pg.ViewBox):
     def show_statistics(self):
         if PVPlot.statisticsWindow is None:
             PVPlot.statisticsWindow = PopupWindow()
-        if PVPlot.statisticsWindow.isVisible():
-            PVPlot.statisticsWindow.hide()
-        else:
-            PVPlot.statisticsWindow.label.setText(f'Statistics will be shown')
-            PVPlot.statisticsWindow.show()
+        txt = get_statistics()
+        PVPlot.statisticsWindow.label.setText(txt)
+        PVPlot.statisticsWindow.show()
+        PVPlot.statistics = {}
 
     def show_yProjection(self):
         if PVPlot.yProjectionWindow is None:
             PVPlot.yProjectionWindow = pg.PlotWidget()
             PVPlot.yProjectionPlotItem = pg.PlotDataItem()
             PVPlot.yProjectionWindow.addItem(PVPlot.yProjectionPlotItem)
-        if PVPlot.yProjectionWindow.isVisible():
-            PVPlot.yProjectionWindow.hide()
-            self.dataset.yProjectionFlag = False
-        else:
-            PVPlot.yProjectionWindow.setWindowTitle(
-                f'Vertical projection of {self.dataset.adoPars[0][0].rsplit(":",1)[1]}')
-            PVPlot.yProjectionWindow.show()
-            self.dataset.yProjectionFlag = True
+
+        PVPlot.yProjectionWindow.show()
+        PVPlot.yProjectionWindow.setWindowTitle(
+            f'Vertical projection of {self.dataset.adoPars[0][0].rsplit(":",1)[1]}')
+        self.dataset.show_yProjection()
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 
 def callback(args):

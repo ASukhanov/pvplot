@@ -19,7 +19,7 @@ def main():
     #  'Plot the space-separated parameters as histograms')
     parser.add_argument('-s', '--sleepTime', type=float, default=0.1,
       help='sleep time between data delivery [s]')
-    parser.add_argument('-v', '--verbose', nargs='*', help=\
+    parser.add_argument('-v', '--verbose', action='count', default=0, help=\
       'Show more log messages (-vv: show even more).')
     parser.add_argument('-x', '--xscale', help=\
      'Parameter, which provides dynamic scale for X-axis')
