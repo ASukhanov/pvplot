@@ -6,7 +6,7 @@ __version__ = 'v0.6.9 2024-05-16'# statistics and yProjection are static
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
 
-import sys, os, time
+import sys, os, time, datetime
 timer = time.perf_counter
 import numpy as np
 from qtpy import QtWidgets as QW, QtGui, QtCore
@@ -269,6 +269,7 @@ class Dataset():
         self.symbolBrush = None
         self.symbolSize = None
         self.pxMode = None
+        self.timeAxis = False
         self.statistics = {}
 
         # ``````````````````` Add plotItem ``````````````````````````````````````
@@ -307,6 +308,7 @@ class Dataset():
             if count == 1 and not isCorrelationPlot:
                 self.plotWidget = pg.PlotWidget(title=title, viewBox=self.viewBox,
                   axisItems={'bottom':DateAxis(orientation='bottom')})
+                self.timeAxis = True
                 if dock != '#0':
                 	self.plotWidget.setXLink(PVPlot.mapOfPlotWidgets['#0'])
             else: 
@@ -671,6 +673,14 @@ class CustomViewBox(pg.ViewBox):
         sleepTimeMenu.addAction(sleepTimeAction)
         return self.menu
 
+    def cursor_text(self, pos, horizontal):
+        #print(f'timeAxis = {self.dataset.timeAxis}')
+        if (not horizontal) and self.dataset.timeAxis:
+            txt = datetime.datetime.fromtimestamp(pos).strftime('%H:%M:%S')
+        else:
+            txt = f'{pos:.4g}'
+        return txt
+        
     def cursorAction(self, direction):
         angle = {'Vertical':90, 'Horizontal':0}[direction]
         pwidget = PVPlot.mapOfPlotWidgets[self.dockName]
@@ -680,11 +690,12 @@ class CustomViewBox(pg.ViewBox):
         pos = (vr[vid][1] + vr[vid][0])/2.
         pen = pg.mkPen(color='b', width=1, style=QtCore.Qt.DotLine)
         cursor = pg.InfiniteLine(pos=pos, pen=pen, movable=True, angle=angle
-        , label=str(round(pos,3)))
+        , label=self.cursor_text(pos,vid), labelOpts={'color':(0,0,0)})#,'fill':(0,255,255)})
         cursor.sigPositionChangeFinished.connect(\
         (partial(self.cursorPositionChanged,cursor)))
         self.cursors.add(cursor)
         pwidget.addItem(cursor)
+        self.cursorPositionChanged(cursor)
 
     def cursorPositionChanged(self, cursor):
         pos = cursor.value()
@@ -695,7 +706,7 @@ class CustomViewBox(pg.ViewBox):
             pwidget.removeItem(cursor)
             self.cursors.remove(cursor)
         else:
-            cursor.label.setText(str(round(pos,3)))
+            cursor.label.setText(self.cursor_text(pos, horizontal))
 
     def changed_datasetOptions(self):
         """Dialog Plotting Options"""
