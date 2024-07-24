@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v0.6.9 2024-05-16'# statistics and yProjection are static
+__version__ = 'v0.7.0 2024-07-24'# corrected vert. cursor for stripcharts, QShortcuts, --limit
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
@@ -429,7 +429,7 @@ class Dataset():
         else:
             # the plot is scrolling or correlation plot
             ptr = self.dataPtr
-            if ptr >= PVPlot.maxPoints:
+            if ptr >= PVPlot.pargs.limit:
                 # do not extent the data buffer, roll it over instead
                 self.data[X] = np.roll(self.data[X],-1)
                 self.data[Y] = np.roll(self.data[Y],-1)
@@ -453,8 +453,10 @@ class Dataset():
                 self.data[X][ptr] = ts
             ptr += 1
             self.dataPtr = ptr
+
+            # re-alocate arrays,if necessary
             #print(f'ptr: {ptr,self.data[Y].shape[0]}')
-            if (ptr <= PVPlot.maxPoints/2) & (ptr >= self.data[Y].shape[0]):
+            if (ptr <= PVPlot.pargs.limit/2) & (ptr >= self.data[Y].shape[0]):
                 tmp = self.data
                 self.data = [np.empty(self.data[Y].shape[0] * 2),
                     np.empty(self.data[Y].shape[0] * 2)]
@@ -558,6 +560,8 @@ class PopupWindow(QW.QWidget):
     """
     def __init__(self):
         super().__init__()
+        qr = PVPlot.qWin.geometry()
+        self.setGeometry(QtCore.QRect(qr.x(), qr.y(), 0, 0))
         self.setWindowTitle('Statistics')
         layout = QW.QVBoxLayout()
         self.label = QW.QLabel()
@@ -656,11 +660,11 @@ class CustomViewBox(pg.ViewBox):
         
         runAction = QW.QWidgetAction(self.menu)
         runWidget = QW.QCheckBox('&Stop')
-        runWidget.setChecked(False)
+        runWidget.setChecked(PVPlot.stopped)
         runWidget.stateChanged.connect(lambda x: self.set_stop(x))
         runAction.setDefaultWidget(runWidget)
         self.menu.addAction(runAction)
-        
+
         sleepTimeMenu = self.menu.addMenu('Sleep&Time')
         sleepTimeAction = QW.QWidgetAction(sleepTimeMenu)
         sleepTimeWidget = QW.QDoubleSpinBox()
@@ -811,10 +815,7 @@ class CustomViewBox(pg.ViewBox):
         set_legend(self.dockName, state)
 
     def set_stop(self, state):
-        if state == QtCore.Qt.Checked:
-            PVPlot.qTimer.stop()
-        else:
-            PVPlot.qTimer.start(int(PVPlot.pargs.sleepTime*1000))
+        PVPlot.stop(state == QtCore.Qt.Checked)
 
     def set_sleepTime(self, itemData):
         #print('setting SleepTime to: '+str(itemData))
@@ -917,10 +918,10 @@ class PVPlot():
     dockArea = None
     minPlottingPeriod = 1/10.# the data will not be plotted faster than that limit.
     lastPlotTime = 0.
-    maxPoints = 1048576# Max number of data points to store.
     statisticsWindow = None
     yProjectionWindow = None
     yProjectionPlotItem = None
+    stopped = False
 
     def start():
         pargs = PVPlot.pargs
@@ -938,6 +939,18 @@ class PVPlot():
         pg.setConfigOption('foreground', 'k')
 
         PVPlot.qWin.setWindowTitle(f'pvplot {pargs.parms}')
+
+        # Shortcuts
+        shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+H"), PVPlot.qWin)
+        shortcut.activated.connect(PVPlot.actionHelp)
+        shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+S"), PVPlot.qWin)
+        shortcut.activated.connect(partial(PVPlot.actionStop,True))
+        shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+Q"), PVPlot.qWin)
+        shortcut.activated.connect(partial(PVPlot.actionStop,False))
+        #shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+U"), PVPlot.qWin)
+        #shortcut.activated.connect(partial(PVPlot.actionStop,False))
+        from . import helptxt
+        PVPlot.helptxt = helptxt.txt
 
         # plots for other docks
         if pargs.dock:
@@ -990,3 +1003,20 @@ class PVPlot():
         ret = qApp.instance().exec_()
         print('Application exited')
         sys.exit(ret)
+
+    def actionStop(state:bool):
+        print(f'actionStop {state}')
+        PVPlot.stop(state)
+
+    def stop(state):
+        print(f'>PVPlot.stop {state}')
+        PVPlot.stopped = state
+        if state == True:
+            PVPlot.qTimer.stop()
+        else:
+            PVPlot.qTimer.start(int(PVPlot.pargs.sleepTime*1000))
+
+    def actionHelp():
+        PVPlot.helpWin = PopupWindow()
+        PVPlot.helpWin.label.setText(PVPlot.helptxt)
+        PVPlot.helpWin.show()
