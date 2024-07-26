@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v0.7.0 2024-07-24'# corrected vert. cursor for stripcharts, QShortcuts, --limit
+__version__ = 'v1.0.0 2024-07-26'# configuration file, shortcuts, 
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
@@ -17,6 +17,7 @@ from pyqtgraph import dockarea
 from functools import partial
 from collections import deque
 import traceback
+from importlib import import_module
 
 #````````````````````````````Constants````````````````````````````````````````
 X,Y = 0,1
@@ -102,7 +103,6 @@ def get_pv(adopar:str, prop='value'):
     return val, ts
 
 def change_plotOption(curveName,color=None,width=None,symbolSize=None,scolor=None):
-    printv('change_plotOption color,width,size,color: '+str((color,width,symbolSize,scolor)))
     dataset = MapOfDatasets.dtsDict[curveName]
     if color != None:
         prop = 'color'
@@ -135,27 +135,6 @@ def split_slice(parNameSlice):
         vslice = (r0, int(vrange[1]))
     return devParSlice[0], vslice
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
-
-def new_dock(dataset):
-    docks = [x.split('.')[0] for x in MapOfDatasets.dtsDict]
-    i = 0
-    while '#'+str(i) in docks: i += 1
-    v = '#'+str(i)+' '+dataset
-    printv('adding plot: '+str(v))
-
-def close_dock(dname):
-    """remove datasets and curves and close the dock widget"""
-    print('closing dock '+dname)
-    for curveName in MapOfDatasets.dtsDict.keys():
-        printv('looking: '+curveName)
-        dock = curveName.split('.')[0]
-        if dock == dname:
-            printv('removing: '+curveName)
-            MapOfDatasets.remove(curveName)
-    printv('MapOfDatasets.dtsDict: '+str(MapOfDatasets.dtsDict))
-    PVPlot.mapOfDocks[dname].close()
-    del PVPlot.mapOfPlotWidgets[dname]
-
 def update_data():
     """ called on QtCore.qTimer() event to update plots."""
     tstart = timer()
@@ -188,30 +167,25 @@ def get_statistics():
         txt += f'{key},\t{v["xrange"]},\t{v["mean"]},\t{v["std"]}\n'
     return txt
 
-def set_legend(dockName:str, state:bool):
+def set_legend(dockNum:int, state:bool):
     if state: # legend enabled
-        printv('add legend for '+str(dockName))
-        widget = PVPlot.mapOfPlotWidgets[dockName]
+        printv(f'add legends to dock{dockNum}')
+        widget = PVPlot.mapOfPlotWidgets[dockNum]
         listOfItems = widget.getPlotItem().listDataItems()
         l = pg.LegendItem((100,60), offset=(70,30))  # args are (size, offset)
         l.setParentItem(widget.graphicsItem())
-        PVPlot.legend[dockName] = l
+        PVPlot.legend[dockNum] = l
         for item in listOfItems:
             iname = item.name()
-            txt = MapOfDatasets.dtsDict[iname].adoPars[0][0]
-            # show only parameter name
-            ltxt = txt.rsplit(':',1)[-1]
-            if '[' in txt:
-               ltxt = ':'.join(txt.rsplit(':',2)[-2:])
-            printv('set_legend: '+iname+' par: '+ltxt)
-            l.addItem(item, ltxt)
+            printv(f'set_legend {iname} in dock{dockNum}')
+            l.addItem(item, iname)
     else: # legend disabled
-        printv('remove legend from '+dockName)
+        printv(f'remove legend from dock{dockNum}')
         try:    
-            PVPlot.legend[dockName].scene().removeItem(PVPlot.legend[dockName])
-            del PVPlot.legend[dockName]
+            PVPlot.legend[dockNum].scene().removeItem(PVPlot.legend[dockNum])
+            del PVPlot.legend[dockNum]
         except Exception as e:
-            printe('failed to remove legend '+dockName+':'+str(e))
+            printe('failed to remove legend '+dockNum+':'+str(e))
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 #```````````````````````````DateAxis class: time scale for bottom plot scale``
 class DateAxis(pg.AxisItem):
@@ -241,7 +215,8 @@ class DateAxis(pg.AxisItem):
 class Dataset():
     """ dataset storage, keeps everything what is necessary to plot the curve.
     """
-    def __init__(self,name,paramAndCount):
+    def __init__(self, dockNum:int, name, paramAndCount):
+        self.dockNum = dockNum
         self.name = name
         self.adoPars = paramAndCount # list of max 2 of (adoPar,count)
         self.plotItem = None # plotting object PlotDataItem
@@ -249,7 +224,6 @@ class Dataset():
         self.width = 1 # pen width
         self.lastTimePlotted = 0.
         self.lastTimeUpdated = 0.
-        self.timestampReported = 0 # time of the last title update
         self.plotWidget = None
         self.viewBox = None
         # members for stripchart plot
@@ -273,49 +247,40 @@ class Dataset():
         self.statistics = {}
 
         # ``````````````````` Add plotItem ``````````````````````````````````````
-        dock = name.split('.')[0]
-        printv('plotItem for: '+str([s for s in self.adoPars])+', name:'+str(dock))
+        #dockNum = name.split('.')[0]
+        printv('plotItem for: '+str([s for s in self.adoPars])+', name:'+str(dockNum))
         initialWidth = 16
         self.data = [np.empty(initialWidth),np.empty(initialWidth)]# [X,U] data storage
         self.dataPtr = 0
         count = self.adoPars[0][1] #
         printv(f'adoPars,count: {self.adoPars,count}')
-
-        # create plotItem with proper pen
-        lineNumber = 0
-        try: lineNumber = int(name.split('.')[1])
-        except: pass
         isCorrelationPlot = len(self.adoPars) >= 2
-        self.pen = pg.mkPen(lineNumber)                
-        if self.adoPars[0][0] == '':
-            printv('no dataset - no plotItem')
-        else:
-            self.plotItem = pg.PlotDataItem(name=name, pen=self.pen)
         
         # assign the plotwidget
-        if dock in PVPlot.mapOfPlotWidgets:
+        if dockNum in PVPlot.mapOfPlotWidgets:
             # dock already exist, use the existing plotwidget
-            self.plotWidget = PVPlot.mapOfPlotWidgets[dock]
+            self.plotWidget = PVPlot.mapOfPlotWidgets[dockNum]
             self.viewBox = self.plotWidget.getViewBox()
         else:
-            # new dock need to be created
+            # viewbox for new dock need to be created
             # create vewBox with plotwidget
-            self.viewBox = CustomViewBox(dock, self)
+            self.viewBox = CustomViewBox(dockNum, self)
             self.viewBox.setMouseMode(self.viewBox.RectMode)
             self.viewBox.sigRangeChangedManually.connect(self.xrangeChanged)
-            printv('Creating new dock:'+dock)
+            printv(f'Creating new dock{dockNum}')
             title = None
             if count == 1 and not isCorrelationPlot:
                 self.plotWidget = pg.PlotWidget(title=title, viewBox=self.viewBox,
                   axisItems={'bottom':DateAxis(orientation='bottom')})
                 self.timeAxis = True
-                if dock != '#0':
-                	self.plotWidget.setXLink(PVPlot.mapOfPlotWidgets['#0'])
+                if dockNum != 0:
+                    self.plotWidget.setXLink(PVPlot.mapOfPlotWidgets[0])
             else: 
                 self.plotWidget = pg.PlotWidget(title=title, viewBox=self.viewBox)
             #self.plotWidget.showGrid(True,True)
-            PVPlot.mapOfPlotWidgets[dock] = self.plotWidget
-            PVPlot.mapOfDocks[dock].addWidget(self.plotWidget)
+            PVPlot.mapOfPlotWidgets[dockNum] = self.plotWidget
+            PVPlot.mapOfDocks[dockNum].addWidget(self.plotWidget)
+            printv(f'docks: {PVPlot.mapOfDocks.keys()}, widgets: {PVPlot.mapOfPlotWidgets.keys()}')
             if isCorrelationPlot:                        
                 self.plotWidget.setLabel('bottom',self.adoPars[1][0])
             elif count == 1:
@@ -332,6 +297,14 @@ class Dataset():
                 continue
             r = [float(i) for i in v[0].split(':')]
             func(*r)
+
+        # create plotItem with proper pen
+        lineNumber = len(PVPlot.mapOfPlotWidgets[self.dockNum].getPlotItem().listDataItems())
+        self.pen = pg.mkPen(lineNumber)                
+        if self.adoPars[0][0] == '':
+            printv('no dataset - no plotItem')
+        else:
+            self.plotItem = pg.PlotDataItem(name=name, pen=self.pen)
 
         if self.plotItem:
             self.plotWidget.addItem(self.plotItem)
@@ -504,46 +477,43 @@ class Dataset():
 class MapOfDatasets():
     """Global dictionary of Datasets, provides safe methods to add and remove 
     the datasets"""
-    dtsDict = {}
+    dtsDict = {}    #{curveName:dataset,,,}
     
-    def add(name, adoPars):
+    def add(dockNum:int, mapOfCurves):
         """add new datasets, the adoPars is the space delimited string of 
         source ado:parameters."""
-        printv(f'>MapOfDatasets.add({adoPars})')
-        if name in MapOfDatasets.dtsDict:
-            printv('Need to remove '+name)
-            MapOfDatasets.remove(name)
-        for i, token in enumerate(adoPars.split()):
-            dname = f'{name}.{i}'
-            pnameAndCount = [];
-            alist = token.split(',')
-            #alist = alist[:2] # we cannot handle more than 2 curves in correlation plot
-            if len(alist) == 0:
-                #MapOfDatasets.dtsDict[dname] = Dataset(dname,[('',0)])
-                #print(f'added dataset {str(MapOfDatasets.dtsDict[dname])}')
-                print(f'Logic error: MapOfDatasets({adoPars})') 
-                sys.exit(1)
+        printv(f'>MapOfDatasets.add({dockNum, mapOfCurves})')
+        for i, kv in enumerate(mapOfCurves.items()):
+            curveName,devList = kv
+            printv(f'curveName: {curveName,devList}')
+            if isinstance(devList,str):
+                devList = [devList]
             else:
-                alist.reverse()
-                for adoPar in alist:
-                    ap = PVPlot.pargs.prefix+adoPar
-                    try:
-                        printv(f'check if {ap}, is alive')
-                        valts = get_pv(ap) # check if parameter is alive
-                        if valts is None:
-                            printw('Could not add {ap}')
-                            return 2
-                    except Exception as e:
-                        printw(f'Exception in getting parameter {ap}')
-                        return 1
-                    val,ts = valts
-                    newName = ap
-                    try:    count = len(val)
-                    except: count = 1
-                    pnameAndCount.append((newName,count))
-                printv('adding '+str(pnameAndCount)+' to datasets['+dname+']')
-                MapOfDatasets.dtsDict[dname] = Dataset(dname,pnameAndCount)
-        printv(f'MapOfDatasets: {[(k,v.adoPars) for k,v in  MapOfDatasets.dtsDict.items()]}')
+                devList = list(devList)
+            devList.reverse()
+            pnameAndCount = []
+            for adoPar in devList:
+                printv(f'adoPar: {adoPar}')
+                if adoPar.startswith('device('):
+                    e = adoPar.index(')')
+                    rest = adoPar[e+1:]# it could be arithmetics
+                    adoPar = adoPar[7:e]
+                try:
+                    printv(f'check if {adoPar}, is alive')
+                    valts = get_pv(adoPar) # check if parameter is alive
+                    if valts is None:
+                        printw('Could not add {adoPar}')
+                        return 2
+                except Exception as e:
+                    printw(f'Exception in getting parameter {adoPar}: {e}')
+                    return 1
+                val,ts = valts
+                try:    count = len(val)
+                except: count = 1
+                pnameAndCount.append((adoPar,count))
+            printv('adding '+str(pnameAndCount)+' to datasets['+curveName+']')
+            MapOfDatasets.dtsDict[curveName] = Dataset(dockNum, curveName, pnameAndCount)
+        printv(f'MapOfDatasets: {[(k,v.adoPars) for k ,v in  MapOfDatasets.dtsDict.items()]}')
         return 0
     
     def remove(name):
@@ -552,7 +522,7 @@ class MapOfDatasets():
         dataset.plotWidget.removeItem(dataset.plotItem)
         del MapOfDatasets.dtsDict[dataset.name]
 
-class PopupWindow(QW.QWidget):
+class PopupWindow(QW.QWidget): 
     """ This "window" is a QWidget. If it has no parent, it
     will appear as a free-floating window as we want.
     Note: The created window will not be closed on app exit.
@@ -573,12 +543,12 @@ class PopupWindow(QW.QWidget):
 class CustomViewBox(pg.ViewBox):
     """ defines actions, activated on the right mouse click in the dock
     """
-    def __init__(self, name, dataset):
-        #self.dockName = kwds['name'] # cannot use name due to an issue in demo
+    def __init__(self, dockNum:int, dataset):
+        #self.dockNum = kwds['name'] # cannot use name due to an issue in demo
         #del kwds['name'] # the name in ViewBox.init fails in demo
-        self.dockName = name
+        self.dockNum = dockNum
         self.dataset = dataset# master dataset, it defines horizontal axis
-        #print('CustomViewBox: '+str(self.dockName))
+        #print('CustomViewBox: '+str(self.dockNum))
 
         # call the init method of the parent class
         super(CustomViewBox, self).__init__()
@@ -607,9 +577,9 @@ class CustomViewBox(pg.ViewBox):
         if self.menu:
             printv('menu exist')
             return self.menu
-        printv('getContextMenus for '+str(self.dockName))
+        printv('getContextMenus for '+str(self.dockNum))
         self.menu = ViewBoxMenu(self)
-        self.menu.setTitle(str(self.dockName)+ " options..")
+        self.menu.setTitle(f'dock{self.dockNum} options..')
 
         # unzoom last
         unzoom = self.menu.addAction("&UnZoom")
@@ -687,7 +657,7 @@ class CustomViewBox(pg.ViewBox):
         
     def cursorAction(self, direction):
         angle = {'Vertical':90, 'Horizontal':0}[direction]
-        pwidget = PVPlot.mapOfPlotWidgets[self.dockName]
+        pwidget = PVPlot.mapOfPlotWidgets[self.dockNum]
         vid = {'Vertical':0, 'Horizontal':1}[direction]
         vr = pwidget.getPlotItem().viewRange()
         #print(f'vid: {vid,vr[vid]}')
@@ -704,7 +674,7 @@ class CustomViewBox(pg.ViewBox):
     def cursorPositionChanged(self, cursor):
         pos = cursor.value()
         horizontal = cursor.angle == 0.
-        pwidget = PVPlot.mapOfPlotWidgets[self.dockName]
+        pwidget = PVPlot.mapOfPlotWidgets[self.dockNum]
         viewRange = pwidget.getPlotItem().viewRange()[horizontal]
         if pos > viewRange[1]:
             pwidget.removeItem(cursor)
@@ -715,21 +685,21 @@ class CustomViewBox(pg.ViewBox):
     def changed_datasetOptions(self):
         """Dialog Plotting Options"""
         dlg = QW.QDialog()
-        dlg.setWindowTitle("Dataset plotting config")
+        dlg.setWindowTitle(f"Dataset of dock{self.dockNum}")
         dlg.setWindowModality(QtCore.Qt.ApplicationModal)
         dlgSize = 500,200
         dlg.setMinimumSize(*dlgSize)
         rowCount,columnCount = 0,6
         tbl = QW.QTableWidget(rowCount, columnCount, dlg)
-        tbl.setHorizontalHeaderLabels(['Dataset','Color','Width','Symbol','Size','Color'])
-        for column,width in ((1,30),(3,50),(5,30)): # change column widths
+        tbl.setHorizontalHeaderLabels(['Name','PV','Color','Width','Symbol','Size','Color'])
+        for column,width in ((0,50),(1,100),(2,30),(3,80),(4,40),(5,80)): # change column widths
             tbl.setColumnWidth(column, width)
         tbl.setShowGrid(False)
         tbl.setSizeAdjustPolicy(
             QW.QAbstractScrollArea.AdjustToContents)
         tbl.resize(*dlgSize)
 
-        listOfItems = PVPlot.mapOfPlotWidgets[self.dockName].getPlotItem().listDataItems()
+        listOfItems = PVPlot.mapOfPlotWidgets[self.dockNum].getPlotItem().listDataItems()
         for row,dataitem in enumerate(listOfItems):
             tbl.insertRow(row)
             curveName = dataitem.name()
@@ -738,16 +708,15 @@ class CustomViewBox(pg.ViewBox):
             adoparName = dataset.adoPars[0][0]
             
             printv(f'dataset:{adoparName}')
-            item = QW.QTableWidgetItem(adoparName.rsplit(':',1)[1])
-            #DNW#item.setTextAlignment(QtCore.Qt.AlignRight)
-            tbl.setItem(row, 0, item)
+            tbl.setItem(row, 0, QW.QTableWidgetItem(curveName))
+            tbl.setItem(row, 1, QW.QTableWidgetItem(adoparName))
 
             # color button for line
             colorButton = pg.ColorButton(color=dataset.pen.color())
             colorButton.setObjectName(curveName)
             colorButton.sigColorChanging.connect(lambda x:
               change_plotOption(str(self.sender().objectName()),color=x.color()))
-            tbl.setCellWidget(row, 1, colorButton)
+            tbl.setCellWidget(row, 2, colorButton)
 
             # slider for changing the line width
             widthSlider = QW.QSlider()
@@ -757,14 +726,14 @@ class CustomViewBox(pg.ViewBox):
             widthSlider.setValue(1)
             widthSlider.valueChanged.connect(lambda x:
               change_plotOption(str(self.sender().objectName()),width=x))
-            tbl.setCellWidget(row, 2, widthSlider)
+            tbl.setCellWidget(row, 3, widthSlider)
             
             # symbol, selected from a comboBox
             self.symbol = QW.QComboBox() # TODO: why self?
             for symbol in ' ostd+x': self.symbol.addItem(symbol)
             self.symbol.setObjectName(curveName)
             self.symbol.currentIndexChanged.connect(self.set_symbol)
-            tbl.setCellWidget(row, 3, self.symbol)
+            tbl.setCellWidget(row, 4, self.symbol)
 
             # slider for changing the line width
             symbolSizeSlider = QW.QSlider()
@@ -774,14 +743,14 @@ class CustomViewBox(pg.ViewBox):
             symbolSizeSlider.setValue(1)
             symbolSizeSlider.valueChanged.connect(lambda x:
               change_plotOption(str(self.sender().objectName()),symbolSize=x))
-            tbl.setCellWidget(row, 4, symbolSizeSlider)
+            tbl.setCellWidget(row, 5, symbolSizeSlider)
 
             # color button for symbol
             symbolColorButton = pg.ColorButton(color=dataset.pen.color())
             symbolColorButton.setObjectName(curveName)
             symbolColorButton.sigColorChanging.connect(lambda x:
               change_plotOption(str(self.sender().objectName()),scolor=x.color()))
-            tbl.setCellWidget(row, 5,symbolColorButton)
+            tbl.setCellWidget(row, 6,symbolColorButton)
         dlg.exec_()
 
     def set_symbol(self, x):
@@ -803,7 +772,7 @@ class CustomViewBox(pg.ViewBox):
             pass
             
     def set_label(self,side,labelGui):
-        dock,label = self.dockName,str(labelGui.text())
+        dock,label = self.dockNum,str(labelGui.text())
         printv('changed_label '+side+': '+str((dock,label)))
         PVPlot.mapOfPlotWidgets[dock].setLabel(side,label, units='')
         # it might be useful to return the prompt back:
@@ -811,8 +780,7 @@ class CustomViewBox(pg.ViewBox):
 
     def set_legend(self, state):
         state = (state==QtCore.Qt.Checked)
-        print(f'set_legend {state}')
-        set_legend(self.dockName, state)
+        set_legend(self.dockNum, state)
 
     def set_stop(self, state):
         PVPlot.stop(state == QtCore.Qt.Checked)
@@ -871,29 +839,27 @@ def callback(args):
         printv(f'axis={axis}, units={units}, scale={scale}')
         PVPlot.scaleUnits[axis][Scale] = scale
 
-def add_curves(dock:str, adopars:str):        
+def add_curves(dockNum:int, curveMap:str):
     # if dock name is new then create new dock, otherwise extend the 
     # existing one with new curve
     
-    curves = [x for x in MapOfDatasets.dtsDict]
-    docks = [x.split('.')[0] for x in curves]
+    #curves = [x for x in MapOfDatasets.dtsDict]
+    #docks = [x.split('.')[0] for x in curves]
+    curves = MapOfDatasets.dtsDict.keys()
+    docks = PVPlot.mapOfDocks.keys()
     printv(f'>addcurves curves,docks:{curves,docks}')
-    if dock in docks:
-        printv('extending dock '+str(dock))
-        for i in range(MaxCurvesPerPlot):
-            newSlot = dock+'.'+str(i+1)
-            if newSlot not in curves: break
-        dock = newSlot
-    else:
-        printv('adding new dock '+dock)
-        PVPlot.mapOfDocks[dock] = dockarea.Dock(dock, size=(500,200), hideTitle=True)
-        if dock == '#0':
-            PVPlot.dockArea.addDock(PVPlot.mapOfDocks[dock], 'right', closable=True)
+    if dockNum not in docks:
+        printv(f'adding new dock{dockNum}')
+        PVPlot.mapOfDocks[dockNum] = dockarea.Dock(str(dockNum),
+          size=(500,200), hideTitle=True)
+        if dockNum == 0:
+            PVPlot.dockArea.addDock(PVPlot.mapOfDocks[dockNum], 'right',
+            closable=True)
         else:
-            PVPlot.dockArea.addDock(PVPlot.mapOfDocks[dock], 
-              'top', PVPlot.mapOfDocks['#0'], closable=True) #TODO:closable does not work
-    if MapOfDatasets.add(dock, adopars):
-            printe('in add_curves: '+str((dock, adopars)))
+            PVPlot.dockArea.addDock(PVPlot.mapOfDocks[dockNum], 
+              'top', PVPlot.mapOfDocks[0], closable=True) #TODO:closable does not work
+    if MapOfDatasets.add(dockNum, curveMap):
+            printe(f'in add_curves: {dockNum, curveMap}')
 
 def excepthook(exc_type, exc_value, exc_tb):
     """To uncover exceptions, missed in Qt"""
@@ -903,10 +869,33 @@ def excepthook(exc_type, exc_value, exc_tb):
     QtWidgets.QApplication.quit()
     # or QtWidgets.QApplication.exit(0)
 
+class tmpClass():
+    DOCKS = [{}]
+
+def parse_input_parameters(pargs):
+    fn = pargs.file
+    print(f'fn:`{fn}`')
+    if fn:
+        print(f'importing {fn}')
+        try:
+            ConfigModule = import_module(fn)
+            configFormat = ConfigModule.configFormat
+        except ModuleNotFoundError as e:
+            printe(f'Trying to import {fn}: {e}')
+            sys.exit(0)
+        return ConfigModule
+    else:
+        for parm in pargs.parms.split():
+            parms = (pargs.prefix+parm).split(',')
+            if len(parms) == 2:
+                parms = (parms[0],pargs.prefix+parms[1])
+            tmpClass.DOCKS[0][parm] =  parms
+        return tmpClass
+
 class PVPlot():
     pargs = None
-    mapOfDocks = {}
     mapOfPlotWidgets = {}
+    mapOfDocks = {}
     padding = 0.1
     scaleUnits = [[1,'Sample'],[1,'Count']]
     subscribedParMap = {}
@@ -938,8 +927,6 @@ class PVPlot():
         pg.setConfigOption('background', 'w')
         pg.setConfigOption('foreground', 'k')
 
-        PVPlot.qWin.setWindowTitle(f'pvplot {pargs.parms}')
-
         # Shortcuts
         shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+H"), PVPlot.qWin)
         shortcut.activated.connect(PVPlot.actionHelp)
@@ -947,27 +934,26 @@ class PVPlot():
         shortcut.activated.connect(partial(PVPlot.actionStop,True))
         shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+Q"), PVPlot.qWin)
         shortcut.activated.connect(partial(PVPlot.actionStop,False))
-        #shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+U"), PVPlot.qWin)
-        #shortcut.activated.connect(partial(PVPlot.actionStop,False))
+        shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+U"), PVPlot.qWin)
+        shortcut.activated.connect(PVPlot.actionUnzoom)
         from . import helptxt
         PVPlot.helptxt = helptxt.txt
 
-        # plots for other docks
-        if pargs.dock:
-            for par in pargs.dock:
-                dock = par[0][0]
-                adopar = par[0][1:].lstrip()
-                dock = '#'+dock
-                add_curves(dock, adopar)
-        else:
-            # plots for the main dock
-            add_curves('#0', pargs.parms)
+        configModule = parse_input_parameters(pargs)
+        try:    title = configModule.TITLE
+        except: title = f'pvplot {pargs.parms}'
+        PVPlot.qWin.setWindowTitle(title)
+        dockList = configModule.DOCKS
+        for dockNum,curveMap in enumerate(dockList):
+            printv(f'add_curves to dock{dockNum}, {curveMap}')
+            add_curves(dockNum, curveMap)
+
         if len(MapOfDatasets.dtsDict) == 0:
             printe(f'No datasets created')
             sys.exit(1)
 
-        for dock in PVPlot.mapOfDocks:
-            set_legend(str(dock), True)
+        for dockNum in PVPlot.mapOfDocks:
+            set_legend(dockNum, True)
 
         # Subscriptions. Only LITE system is supported.
         if pargs.xscale is not None:
@@ -1004,19 +990,25 @@ class PVPlot():
         print('Application exited')
         sys.exit(ret)
 
-    def actionStop(state:bool):
-        print(f'actionStop {state}')
-        PVPlot.stop(state)
-
     def stop(state):
-        print(f'>PVPlot.stop {state}')
         PVPlot.stopped = state
         if state == True:
             PVPlot.qTimer.stop()
         else:
             PVPlot.qTimer.start(int(PVPlot.pargs.sleepTime*1000))
 
+    #``````````Shorthcut handlers
     def actionHelp():
         PVPlot.helpWin = PopupWindow()
         PVPlot.helpWin.label.setText(PVPlot.helptxt)
         PVPlot.helpWin.show()
+
+    def actionStop(state:bool):
+        PVPlot.stop(state)
+
+    def actionUnzoom():
+        md = PVPlot.mapOfDocks
+        docks = md.keys()
+        for dockNum in docks:
+            vb = PVPlot.mapOfPlotWidgets[dockNum].getPlotItem().getViewBox()
+            vb.unzoom()
