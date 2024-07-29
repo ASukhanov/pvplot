@@ -17,6 +17,8 @@ def main():
       "Prefix, which will be added to all data objects, e.g: 'L:localhost:dev1:'")
     #TODO:parser.add_argument('-H', '--histogram', help=\
     #  'Plot the space-separated parameters as histograms')
+    parser.add_argument('-c','--configDir',default='/operations/app_store/pvplot',
+      help='Configuration directory')
     parser.add_argument('-f', '--file', help=
       'Configuration file')
     parser.add_argument('-l', '--limit', type=int, default=1048576,

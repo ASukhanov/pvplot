@@ -3,9 +3,13 @@ The command line to start litePeakSimulator:
    python3 -m liteserver.device.litePeakSimulator -ilo -p9710
 """
 configFormat='pvplot'
-TITLE="PeakSimulator"
 
-""" The following variables are not handled yet:
+TITLE="PeakSimulator"
+XLABEL = "Time (us)"
+YLABEL = "V"
+POINTS = 1000# data arrays will be rolled over after accumulating this number of points
+
+""" The following attributes are not handled yet:
 YES = 1
 POLLPERIOD = 0
 MINPOLLPERIOD = 0
@@ -19,8 +23,6 @@ LOGCORRELATION = 'NOTREQUIRED'
 FILLDATA = YES
 LOGTREEPATH = '/operations/app_store/RunData/currentFill/'
 PREFERREDLOGDISPLAY = Snapshot
-XLABEL = "Time (us)"
-YLABEL = "V"
 DATASTAMPTYPE = 'WCTPERIOD'
 WCTCORRPERIOD_MSEC = 1000
 WCTCORRWINDOW_MSEC = 1000
@@ -36,6 +38,7 @@ ERRORBARS = 0
 FONTTYPE = 'Medium'
 KEEPPREVIOUS = 0
 """
+
 dev='L:localhost;9710:dev1:'
 
 DOCKS = [

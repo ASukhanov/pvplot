@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v1.0.0 2024-07-26'# configuration file, shortcuts, 
+__version__ = 'v1.0.1 2024-07-28'# sys.path.append(pargs.configDir, 
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
@@ -281,12 +281,20 @@ class Dataset():
             PVPlot.mapOfPlotWidgets[dockNum] = self.plotWidget
             PVPlot.mapOfDocks[dockNum].addWidget(self.plotWidget)
             printv(f'docks: {PVPlot.mapOfDocks.keys()}, widgets: {PVPlot.mapOfPlotWidgets.keys()}')
-            if isCorrelationPlot:                        
-                self.plotWidget.setLabel('bottom',self.adoPars[1][0])
-            elif count == 1:
-                self.plotWidget.setLabel('bottom','time', units='date', unitPrefix='')
+
+            c = PVPlot.config
+            #print(f'd:{self.dockNum}, X,Y: {c.XLABEL,c.YLABEL}')
+            if self.dockNum == 0 and c.YLABEL != 'LabelY':
+                self.plotWidget.setLabel('left',c.YLABEL)
+            if self.dockNum == 0 and c.XLABEL != 'LabelX':
+                self.plotWidget.setLabel('bottom',c.XLABEL)
             else:
-                self.plotWidget.setLabel('bottom',PVPlot.scaleUnits[X][Units])
+                if isCorrelationPlot:
+                    self.plotWidget.setLabel('bottom',self.adoPars[1][0])
+                elif count == 1:
+                    self.plotWidget.setLabel('bottom','time', units='date', unitPrefix='')
+                else:
+                    self.plotWidget.setLabel('bottom',PVPlot.scaleUnits[X][Units])
 
         # set X and Y ranges
         rangeMap = {X: (PVPlot.pargs.xrange, self.plotWidget.setXRange),
@@ -428,8 +436,8 @@ class Dataset():
             self.dataPtr = ptr
 
             # re-alocate arrays,if necessary
-            #print(f'ptr: {ptr,self.data[Y].shape[0]}')
-            if (ptr <= PVPlot.pargs.limit/2) & (ptr >= self.data[Y].shape[0]):
+            if (ptr >= self.data[Y].shape[0]):
+                #print(f'realllocate: ptr: {ptr,self.data[Y].shape[0]}')
                 tmp = self.data
                 self.data = [np.empty(self.data[Y].shape[0] * 2),
                     np.empty(self.data[Y].shape[0] * 2)]
@@ -493,6 +501,7 @@ class MapOfDatasets():
             devList.reverse()
             pnameAndCount = []
             for adoPar in devList:
+                adoPar = adoPar.lstrip()#remove leading whitespaces
                 printv(f'adoPar: {adoPar}')
                 if adoPar.startswith('device('):
                     e = adoPar.index(')')
@@ -601,13 +610,13 @@ class CustomViewBox(pg.ViewBox):
             action.triggered.connect(partial(self.cursorAction,cursor))
         
         labelX = QW.QWidgetAction(self.menu)
-        self.labelXGui = QW.QLineEdit('LabelX')
+        self.labelXGui = QW.QLineEdit(PVPlot.config.XLABEL)
         self.labelXGui.returnPressed.connect(
             lambda: self.set_label('bottom',self.labelXGui))
         labelX.setDefaultWidget(self.labelXGui)
         self.menu.addAction(labelX)
         labelY = QW.QWidgetAction(self.menu)
-        self.labelYGui = QW.QLineEdit('LabelY')
+        self.labelYGui = QW.QLineEdit(PVPlot.config.YLABEL)
         self.labelYGui.returnPressed.connect(
             lambda: self.set_label('left',self.labelYGui))
         labelY.setDefaultWidget(self.labelYGui)
@@ -866,22 +875,22 @@ def excepthook(exc_type, exc_value, exc_tb):
     tb = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
     print("error caught!:")
     print("error message:\n", tb)
-    QtWidgets.QApplication.quit()
-    # or QtWidgets.QApplication.exit(0)
+    QApplication.quit()
+    # or QApplication.exit(0)
 
 class tmpClass():
     DOCKS = [{}]
 
 def parse_input_parameters(pargs):
     fn = pargs.file
-    print(f'fn:`{fn}`')
     if fn:
-        print(f'importing {fn}')
+        sys.path.append(pargs.configDir)
+        printv(f'importing {fn}')
         try:
             ConfigModule = import_module(fn)
             configFormat = ConfigModule.configFormat
         except ModuleNotFoundError as e:
-            printe(f'Trying to import {fn}: {e}')
+            printe(f'Trying to import {pargs.configDir}/{fn}: {e}')
             sys.exit(0)
         return ConfigModule
     else:
@@ -893,6 +902,7 @@ def parse_input_parameters(pargs):
         return tmpClass
 
 class PVPlot():
+    config = None
     pargs = None
     mapOfPlotWidgets = {}
     mapOfDocks = {}
@@ -914,7 +924,7 @@ class PVPlot():
 
     def start():
         pargs = PVPlot.pargs
-        print(f'pargs: {PVPlot.pargs}')
+        printv(f'pargs: {PVPlot.pargs}')
 
         try:    os.environ["QT_SCALE_FACTOR"] = str(pargs.zoomin)
         except: pass
@@ -939,14 +949,21 @@ class PVPlot():
         from . import helptxt
         PVPlot.helptxt = helptxt.txt
 
-        configModule = parse_input_parameters(pargs)
-        try:    title = configModule.TITLE
-        except: title = f'pvplot {pargs.parms}'
+        #``````````process configuration file
+        if pargs.file is not None:
+            PVPlot.config = parse_input_parameters(pargs)
+
+        try:    pargs.limit = PVPlot.config.POINTS
+        except: pass
+
+        try:    title = PVPlot.config.TITLE
+        except: title = title = f'pvplot {pargs.parms}'
         PVPlot.qWin.setWindowTitle(title)
-        dockList = configModule.DOCKS
+        dockList = PVPlot.config.DOCKS
         for dockNum,curveMap in enumerate(dockList):
             printv(f'add_curves to dock{dockNum}, {curveMap}')
             add_curves(dockNum, curveMap)
+        #,,,,,,,,,,
 
         if len(MapOfDatasets.dtsDict) == 0:
             printe(f'No datasets created')
