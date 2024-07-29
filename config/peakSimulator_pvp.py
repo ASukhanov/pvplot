@@ -42,7 +42,7 @@ KEEPPREVIOUS = 0
 dev='L:localhost;9710:dev1:'
 
 DOCKS = [
-  {'YMax':f'device({dev}yMax)',
+  {'YMax':f'{dev}yMax',# without device()
    'YMin':f'device({dev}yMin)',
    'Y[10]':f'device({dev}y[500])',
   },

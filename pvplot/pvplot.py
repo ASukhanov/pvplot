@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v1.0.1 2024-07-28'# sys.path.append(pargs.configDir, 
+__version__ = 'v1.2.3 2024-07-29'# fix: config-less plotting 
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
@@ -24,12 +24,12 @@ X,Y = 0,1
 Scale,Units = 0,1
 #````````````````````````````Helper methods```````````````````````````````````
 def printTime(): return time.strftime("%m%d:%H%M%S")
-def printi(msg): print((f'INFO_PP@{printTime()}: '+msg))
-def printw(msg): print((f'WARN_PP@{printTime()}: '+msg))
-def printe(msg): print((f'ERR_PP@{printTime()}: '+msg))
+def printi(msg): print((f'INFO_PVP@{printTime()}: '+msg))
+def printw(msg): print((f'WARN_PVP@{printTime()}: '+msg))
+def printe(msg): print((f'ERR_PVP@{printTime()}: '+msg))
 def _printv(msg, level=0):
     if PVPlot.pargs.verbose > level:
-        print((f'DBG{level}_PP@{printTime()}: '+msg))
+        print((f'DBG{level}_PVP@{printTime()}: '+msg))
 def printv(msg):   _printv(msg, 0)
 def printvv(msg):  _printv(msg, 1)
 
@@ -283,11 +283,13 @@ class Dataset():
             printv(f'docks: {PVPlot.mapOfDocks.keys()}, widgets: {PVPlot.mapOfPlotWidgets.keys()}')
 
             c = PVPlot.config
-            #print(f'd:{self.dockNum}, X,Y: {c.XLABEL,c.YLABEL}')
-            if self.dockNum == 0 and c.YLABEL != 'LabelY':
-                self.plotWidget.setLabel('left',c.YLABEL)
-            if self.dockNum == 0 and c.XLABEL != 'LabelX':
-                self.plotWidget.setLabel('bottom',c.XLABEL)
+            if c is None:   xl,yl = 'LabelX','LabelY'
+            else:           xl,yl = c.XLABEL,c.YLABEL
+            #print(f'd:{self.dockNum}, X,Y: {xl,yl}')
+            if self.dockNum == 0 and yl != 'LabelY':
+                self.plotWidget.setLabel('left', yl)
+            if self.dockNum == 0 and xl != 'LabelX':
+                self.plotWidget.setLabel('bottom', xl)
             else:
                 if isCorrelationPlot:
                     self.plotWidget.setLabel('bottom',self.adoPars[1][0])
@@ -610,13 +612,13 @@ class CustomViewBox(pg.ViewBox):
             action.triggered.connect(partial(self.cursorAction,cursor))
         
         labelX = QW.QWidgetAction(self.menu)
-        self.labelXGui = QW.QLineEdit(PVPlot.config.XLABEL)
+        self.labelXGui = QW.QLineEdit('LabelX')
         self.labelXGui.returnPressed.connect(
             lambda: self.set_label('bottom',self.labelXGui))
         labelX.setDefaultWidget(self.labelXGui)
         self.menu.addAction(labelX)
         labelY = QW.QWidgetAction(self.menu)
-        self.labelYGui = QW.QLineEdit(PVPlot.config.YLABEL)
+        self.labelYGui = QW.QLineEdit('LabelY')
         self.labelYGui.returnPressed.connect(
             lambda: self.set_label('left',self.labelYGui))
         labelY.setDefaultWidget(self.labelYGui)
@@ -700,8 +702,10 @@ class CustomViewBox(pg.ViewBox):
         dlg.setMinimumSize(*dlgSize)
         rowCount,columnCount = 0,6
         tbl = QW.QTableWidget(rowCount, columnCount, dlg)
-        tbl.setHorizontalHeaderLabels(['Name','PV','Color','Width','Symbol','Size','Color'])
-        for column,width in ((0,50),(1,100),(2,30),(3,80),(4,40),(5,80)): # change column widths
+        tbl.setHorizontalHeaderLabels(
+              ['Name','PV','Color','Width','Symbol','Size'])
+        widths = ( 50, 100,     30,     80,      40,    80)
+        for column,width in enumerate(widths):
             tbl.setColumnWidth(column, width)
         tbl.setShowGrid(False)
         tbl.setSizeAdjustPolicy(
@@ -713,20 +717,21 @@ class CustomViewBox(pg.ViewBox):
             tbl.insertRow(row)
             curveName = dataitem.name()
             printv(f'curveName:{curveName}')
+            col = 0
             dataset = MapOfDatasets.dtsDict[curveName]
             adoparName = dataset.adoPars[0][0]
-            
+            tbl.setItem(row, col, QW.QTableWidgetItem(curveName))
+            col+=1
             printv(f'dataset:{adoparName}')
-            tbl.setItem(row, 0, QW.QTableWidgetItem(curveName))
-            tbl.setItem(row, 1, QW.QTableWidgetItem(adoparName))
-
+            tbl.setItem(row, col, QW.QTableWidgetItem(adoparName))
+            col+=1
             # color button for line
             colorButton = pg.ColorButton(color=dataset.pen.color())
             colorButton.setObjectName(curveName)
             colorButton.sigColorChanging.connect(lambda x:
               change_plotOption(str(self.sender().objectName()),color=x.color()))
-            tbl.setCellWidget(row, 2, colorButton)
-
+            tbl.setCellWidget(row, col, colorButton)
+            col+=1
             # slider for changing the line width
             widthSlider = QW.QSlider()
             widthSlider.setObjectName(curveName)
@@ -735,15 +740,15 @@ class CustomViewBox(pg.ViewBox):
             widthSlider.setValue(1)
             widthSlider.valueChanged.connect(lambda x:
               change_plotOption(str(self.sender().objectName()),width=x))
-            tbl.setCellWidget(row, 3, widthSlider)
-            
+            tbl.setCellWidget(row, col, widthSlider)
+            col+=1
             # symbol, selected from a comboBox
             self.symbol = QW.QComboBox() # TODO: why self?
             for symbol in ' ostd+x': self.symbol.addItem(symbol)
             self.symbol.setObjectName(curveName)
             self.symbol.currentIndexChanged.connect(self.set_symbol)
-            tbl.setCellWidget(row, 4, self.symbol)
-
+            tbl.setCellWidget(row, col, self.symbol)
+            col+=1
             # slider for changing the line width
             symbolSizeSlider = QW.QSlider()
             symbolSizeSlider.setObjectName(curveName)
@@ -752,14 +757,14 @@ class CustomViewBox(pg.ViewBox):
             symbolSizeSlider.setValue(1)
             symbolSizeSlider.valueChanged.connect(lambda x:
               change_plotOption(str(self.sender().objectName()),symbolSize=x))
-            tbl.setCellWidget(row, 5, symbolSizeSlider)
-
+            tbl.setCellWidget(row, col, symbolSizeSlider)
+            col+=1
             # color button for symbol
             symbolColorButton = pg.ColorButton(color=dataset.pen.color())
             symbolColorButton.setObjectName(curveName)
             symbolColorButton.sigColorChanging.connect(lambda x:
               change_plotOption(str(self.sender().objectName()),scolor=x.color()))
-            tbl.setCellWidget(row, 6,symbolColorButton)
+            tbl.setCellWidget(row, col,symbolColorButton)
         dlg.exec_()
 
     def set_symbol(self, x):
@@ -856,7 +861,7 @@ def add_curves(dockNum:int, curveMap:str):
     #docks = [x.split('.')[0] for x in curves]
     curves = MapOfDatasets.dtsDict.keys()
     docks = PVPlot.mapOfDocks.keys()
-    printv(f'>addcurves curves,docks:{curves,docks}')
+    printv(f'>addcurves curves {curveMap} to {curves,docks}')
     if dockNum not in docks:
         printv(f'adding new dock{dockNum}')
         PVPlot.mapOfDocks[dockNum] = dockarea.Dock(str(dockNum),
@@ -953,17 +958,31 @@ class PVPlot():
         if pargs.file is not None:
             PVPlot.config = parse_input_parameters(pargs)
 
-        try:    pargs.limit = PVPlot.config.POINTS
-        except: pass
+            try:    pargs.limit = PVPlot.config.POINTS
+            except: pass
 
-        try:    title = PVPlot.config.TITLE
-        except: title = title = f'pvplot {pargs.parms}'
-        PVPlot.qWin.setWindowTitle(title)
-        dockList = PVPlot.config.DOCKS
-        for dockNum,curveMap in enumerate(dockList):
-            printv(f'add_curves to dock{dockNum}, {curveMap}')
-            add_curves(dockNum, curveMap)
+            try:    title = PVPlot.config.TITLE
+            except: title = title = f'pvplot {pargs.parms}'
+            PVPlot.qWin.setWindowTitle(title)
+            dockList = PVPlot.config.DOCKS
+            for dockNum,curveMap in enumerate(dockList):
+                printv(f'add_curves to dock{dockNum}, {curveMap}')
+                add_curves(dockNum, curveMap)
         #,,,,,,,,,,
+        else:
+            if pargs.dock:
+                for par in pargs.dock:
+                    dockNum = par[0][0]
+                    adopar = par[0][1:].lstrip()
+                    add_curves(dockNum, {adopar:adopar})
+            else:
+                # plots for the main dock
+                if not ',' in pargs.parms:
+                    for parName in pargs.parms.split():
+                        add_curves(0, {parName:pargs.prefix+parName})
+                else:
+                    x,y = pargs.parms.split(',')
+                    add_curves(0, {f'{y} vs {x}': (pargs.prefix+x, pargs.prefix+y)})
 
         if len(MapOfDatasets.dtsDict) == 0:
             printe(f'No datasets created')
