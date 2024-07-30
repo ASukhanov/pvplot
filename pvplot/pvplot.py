@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v1.3.0 2024-07-30'# allow for disable/enable curves,
+__version__ = 'v1.3.1 2024-07-30'# fixed: missing XLABEL
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
@@ -283,9 +283,11 @@ class Dataset():
             PVPlot.mapOfDocks[dockNum].addWidget(self.plotWidget)
             printv(f'docks: {PVPlot.mapOfDocks.keys()}, widgets: {PVPlot.mapOfPlotWidgets.keys()}')
 
-            c = PVPlot.config
-            if c is None:   xl,yl = 'LabelX','LabelY'
-            else:           xl,yl = c.XLABEL,c.YLABEL
+            xl,yl = 'LabelX','LabelY'
+            try:
+                c = PVPlot.config
+                xl,yl = c.XLABEL,c.YLABEL
+            except: pass
             #print(f'd:{self.dockNum}, X,Y: {xl,yl}')
             if self.dockNum == 0 and yl != 'LabelY':
                 self.plotWidget.setLabel('left', yl)
