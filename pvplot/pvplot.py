@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v1.2.3 2024-07-29'# fix: config-less plotting 
+__version__ = 'v1.3.0 2024-07-30'# allow for disable/enable curves,
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
@@ -245,6 +245,7 @@ class Dataset():
         self.pxMode = None
         self.timeAxis = False
         self.statistics = {}
+        self.enabled = True
 
         # ``````````````````` Add plotItem ``````````````````````````````````````
         #dockNum = name.split('.')[0]
@@ -320,6 +321,12 @@ class Dataset():
             self.plotWidget.addItem(self.plotItem)
         self.lastTimePlotted = 0.
 
+    def add_plot(self):
+        self.plotWidget.addItem(self.plotItem)
+
+    def remove_plot(self):
+        self.plotWidget.removeItem(self.plotItem)
+
     def __str__(self):
         return f'Dataset {self.name}, x: {self.data[X].shape}'
 
@@ -345,9 +352,10 @@ class Dataset():
         self.viewBox.setXRange(self.viewXRange[0], self.viewXRange[1])
 
     def plot(self, ts):
-        # Plot the dataset
+        # Plot the dataset. It may be several updates between these calls.
         if self.lastTimePlotted == ts:
             return
+        printv(f'>plot: {self.name}')
         self.lastTimePlotted = ts
         #print(f'>plot: {self.name, {self.dataPtr}, round(ts,3)}')
         x = self.data[X][:self.dataPtr]
@@ -383,10 +391,11 @@ class Dataset():
         if ts:
             if ts == self.lastTimeUpdated:
                 self.dataChanged = False
-                #print(f'curve {self.name} did not change {round(ts,3)}')
-                if time2plot:
-                    self.plot(ts)
+                printv(f'curve {self.name} did not change {round(ts,3)}')
+                #if time2plot:
+                #    self.plot(ts)
                 return
+        printv(f'update_plot: {self.name,curvePars}')
         self.dataChanged = True
         self.lastTimeUpdated = ts
         #printv(f'update_plot: {curvePars}, data:{yd}')
@@ -524,6 +533,7 @@ class MapOfDatasets():
                 pnameAndCount.append((adoPar,count))
             printv('adding '+str(pnameAndCount)+' to datasets['+curveName+']')
             MapOfDatasets.dtsDict[curveName] = Dataset(dockNum, curveName, pnameAndCount)
+            PVPlot.mapOfCurves[dockNum].append(curveName)
         printv(f'MapOfDatasets: {[(k,v.adoPars) for k ,v in  MapOfDatasets.dtsDict.items()]}')
         return 0
     
@@ -698,32 +708,37 @@ class CustomViewBox(pg.ViewBox):
         dlg = QW.QDialog()
         dlg.setWindowTitle(f"Dataset of dock{self.dockNum}")
         dlg.setWindowModality(QtCore.Qt.ApplicationModal)
-        dlgSize = 500,200
-        dlg.setMinimumSize(*dlgSize)
-        rowCount,columnCount = 0,6
+        rowCount,columnCount = 0,8
         tbl = QW.QTableWidget(rowCount, columnCount, dlg)
         tbl.setHorizontalHeaderLabels(
-              ['Name','PV','Color','Width','Symbol','Size'])
-        widths = ( 50, 100,     30,     80,      40,    80)
+              ['Enb','Name','PV','Color','Width','Symbol','Size',''])
+        widths = (30,    50, 100,     30,     80,      40,    80,80)
         for column,width in enumerate(widths):
             tbl.setColumnWidth(column, width)
         tbl.setShowGrid(False)
         tbl.setSizeAdjustPolicy(
             QW.QAbstractScrollArea.AdjustToContents)
-        tbl.resize(*dlgSize)
 
-        listOfItems = PVPlot.mapOfPlotWidgets[self.dockNum].getPlotItem().listDataItems()
-        for row,dataitem in enumerate(listOfItems):
+        for row,curveName in enumerate(PVPlot.mapOfCurves[self.dockNum]):
             tbl.insertRow(row)
-            curveName = dataitem.name()
             printv(f'curveName:{curveName}')
-            col = 0
             dataset = MapOfDatasets.dtsDict[curveName]
+            col = 0
+            cbox = QW.QCheckBox()
+            cbox.setChecked(dataset.enabled)
+            #cbox.stateChanged.connect(lambda x: self.enable_dataset(x))
+            cbox.stateChanged.connect(self.enable_dataset)
+            cbox.setObjectName(curveName)
+            tbl.setCellWidget(row, col, cbox)
+
+            col+=1
             adoparName = dataset.adoPars[0][0]
             tbl.setItem(row, col, QW.QTableWidgetItem(curveName))
+
             col+=1
             printv(f'dataset:{adoparName}')
             tbl.setItem(row, col, QW.QTableWidgetItem(adoparName))
+
             col+=1
             # color button for line
             colorButton = pg.ColorButton(color=dataset.pen.color())
@@ -731,6 +746,7 @@ class CustomViewBox(pg.ViewBox):
             colorButton.sigColorChanging.connect(lambda x:
               change_plotOption(str(self.sender().objectName()),color=x.color()))
             tbl.setCellWidget(row, col, colorButton)
+
             col+=1
             # slider for changing the line width
             widthSlider = QW.QSlider()
@@ -741,6 +757,7 @@ class CustomViewBox(pg.ViewBox):
             widthSlider.valueChanged.connect(lambda x:
               change_plotOption(str(self.sender().objectName()),width=x))
             tbl.setCellWidget(row, col, widthSlider)
+
             col+=1
             # symbol, selected from a comboBox
             self.symbol = QW.QComboBox() # TODO: why self?
@@ -748,6 +765,7 @@ class CustomViewBox(pg.ViewBox):
             self.symbol.setObjectName(curveName)
             self.symbol.currentIndexChanged.connect(self.set_symbol)
             tbl.setCellWidget(row, col, self.symbol)
+
             col+=1
             # slider for changing the line width
             symbolSizeSlider = QW.QSlider()
@@ -758,13 +776,11 @@ class CustomViewBox(pg.ViewBox):
             symbolSizeSlider.valueChanged.connect(lambda x:
               change_plotOption(str(self.sender().objectName()),symbolSize=x))
             tbl.setCellWidget(row, col, symbolSizeSlider)
-            col+=1
-            # color button for symbol
-            symbolColorButton = pg.ColorButton(color=dataset.pen.color())
-            symbolColorButton.setObjectName(curveName)
-            symbolColorButton.sigColorChanging.connect(lambda x:
-              change_plotOption(str(self.sender().objectName()),scolor=x.color()))
-            tbl.setCellWidget(row, col,symbolColorButton)
+
+        #dlg.resize(tbl.width(),tbl.height())
+        dialogWidth = tbl.horizontalHeader().length() + 24
+        dialogHeight= tbl.verticalHeader().length()   + 24
+        dlg.setMinimumSize(dialogWidth, dialogHeight)
         dlg.exec_()
 
     def set_symbol(self, x):
@@ -838,6 +854,15 @@ class CustomViewBox(pg.ViewBox):
         PVPlot.yProjectionWindow.setWindowTitle(
             f'Vertical projection of {self.dataset.adoPars[0][0].rsplit(":",1)[1]}')
         self.dataset.show_yProjection()
+
+    def enable_dataset(self, state):
+        dtsetName = str(self.sender().objectName())
+        #print(f'enable_dataset {dtsetName, (state==QtCore.Qt.Checked)}')
+        dataset = MapOfDatasets.dtsDict[dtsetName]
+        enabled = (state==QtCore.Qt.Checked)
+        dataset.enabled = enabled
+        dataset.add_plot() if enabled else dataset.remove_plot()
+        #set_legend(self.dockNum, enabled)# deletes all legend items
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 
 def callback(args):
@@ -872,6 +897,7 @@ def add_curves(dockNum:int, curveMap:str):
         else:
             PVPlot.dockArea.addDock(PVPlot.mapOfDocks[dockNum], 
               'top', PVPlot.mapOfDocks[0], closable=True) #TODO:closable does not work
+        PVPlot.mapOfCurves[dockNum] = []
     if MapOfDatasets.add(dockNum, curveMap):
             printe(f'in add_curves: {dockNum, curveMap}')
 
@@ -909,8 +935,9 @@ def parse_input_parameters(pargs):
 class PVPlot():
     config = None
     pargs = None
-    mapOfPlotWidgets = {}
-    mapOfDocks = {}
+    mapOfPlotWidgets = {}# active plotItems
+    mapOfDocks = {}# dockAreas
+    mapOfCurves = {}
     padding = 0.1
     scaleUnits = [[1,'Sample'],[1,'Count']]
     subscribedParMap = {}
@@ -1030,8 +1057,11 @@ class PVPlot():
         PVPlot.stopped = state
         if state == True:
             PVPlot.qTimer.stop()
+            title = PVPlot.qWin.windowTitle()+' Stopped'
         else:
             PVPlot.qTimer.start(int(PVPlot.pargs.sleepTime*1000))
+            title = PVPlot.qWin.windowTitle().replace(' Stopped','')
+        PVPlot.qWin.setWindowTitle(title)       
 
     #``````````Shorthcut handlers
     def actionHelp():
