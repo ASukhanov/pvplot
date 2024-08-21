@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v1.3.2 2024-08-20'# do not printv curve ... did not change, label color, better statistics
+__version__ = 'v1.3.3 2024-08-21'# Statistics shows full name of parameter
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
-#TODO: Use teich text in statistics
+#TODO: Use rich text in statistics, make it as table or use pprint
 
 import sys, os, time, datetime
 timer = time.perf_counter
@@ -481,7 +481,7 @@ class Dataset():
 
     def get_statistics(self):
         ileft,iright = self._visibleRange()
-        parname = self.adoPars[0][0].rsplit(':',1)[1]
+        parname = self.adoPars[0][0]
         r = {parname:{}}
         rp = r[parname]
         rp['xrange'] = (ileft,iright)
@@ -1098,8 +1098,8 @@ class PVPlot():
                 s = dataset.get_statistics()
                 if len(s) != 0:
                     statistics.update(s)
-            txt = ('Parameter,\tRange \tMean  \tSTD   \tPeak2Peak\n'
-                   '----------\t------\t------\t------\t---------\n')
+            txt = ('Parameter\t\tRange \tMean  \tSTD   \tPeak2Peak\n'
+                   '---------\t\t------\t------\t------\t---------\n')
             for key,v in statistics.items():
                 txt += f'{key}:\t{v["xrange"]}\t{v["mean"]:.6g}\t{v["std"]:.6g}\t{v["p2p"]:.6g}\n'
             return txt
