@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v1.3.1 2024-07-30'# fixed: missing XLABEL
+__version__ = 'v1.3.2 2024-08-20'# do not printv curve ... did not change, label color, better statistics
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
+#TODO: Use teich text in statistics
 
 import sys, os, time, datetime
 timer = time.perf_counter
@@ -22,6 +23,18 @@ from importlib import import_module
 #````````````````````````````Constants````````````````````````````````````````
 X,Y = 0,1
 Scale,Units = 0,1
+TxtColor = (0,128,128)# color of the plot texts
+class color:
+   PURPLE = '\033[95m'
+   CYAN = '\033[96m'
+   DARKCYAN = '\033[36m'
+   BLUE = '\033[94m'
+   GREEN = '\033[92m'
+   YELLOW = '\033[93m'
+   RED = '\033[91m'
+   BOLD = '\033[1m'
+   UNDERLINE = '\033[4m'
+   END = '\033[0m'
 #````````````````````````````Helper methods```````````````````````````````````
 def printTime(): return time.strftime("%m%d:%H%M%S")
 def printi(msg): print((f'INFO_PVP@{printTime()}: '+msg))
@@ -141,7 +154,7 @@ def update_data():
     tt = round(time.time(),6)
     if tt > PVPlot.lastPlotTime + PVPlot.minPlottingPeriod:
         time2plot = True
-        PVPlot.lastPlotTime = tt + PVPlot.minPlottingPeriod
+        PVPlot.lastPlotTime = tt
     else:
         time2plot = False
 
@@ -156,23 +169,12 @@ def update_data():
         v = timer()-tstart
         print('update time:'+str(timer()-tstart))
 
-def get_statistics():
-    statistics = {}
-    for dataset in MapOfDatasets.dtsDict.values():
-        s = dataset.get_statistics()
-        if len(s) != 0:
-            statistics.update(s)
-    txt = 'Parm,\tRange,\tMean,\t\tSTD\n'
-    for key,v in statistics.items():
-        txt += f'{key},\t{v["xrange"]},\t{v["mean"]},\t{v["std"]}\n'
-    return txt
-
 def set_legend(dockNum:int, state:bool):
     if state: # legend enabled
         printv(f'add legends to dock{dockNum}')
         widget = PVPlot.mapOfPlotWidgets[dockNum]
         listOfItems = widget.getPlotItem().listDataItems()
-        l = pg.LegendItem((100,60), offset=(70,30))  # args are (size, offset)
+        l = pg.LegendItem((100,60), offset=(70,30), labelTextColor=TxtColor)  # args are (size, offset)
         l.setParentItem(widget.graphicsItem())
         PVPlot.legend[dockNum] = l
         for item in listOfItems:
@@ -393,14 +395,11 @@ class Dataset():
         if ts:
             if ts == self.lastTimeUpdated:
                 self.dataChanged = False
-                printv(f'curve {self.name} did not change {round(ts,3)}')
-                #if time2plot:
-                #    self.plot(ts)
+                #printv(f'curve {self.name} did not change {round(ts,3)}')
                 return
         printv(f'update_plot: {self.name,curvePars}')
         self.dataChanged = True
         self.lastTimeUpdated = ts
-        #printv(f'update_plot: {curvePars}, data:{yd}')
         #print(f'update {self.name, round(ts,3), round(self.lastTimePlotted,3)}')
         try:    
             l = len(yd)
@@ -486,8 +485,10 @@ class Dataset():
         r = {parname:{}}
         rp = r[parname]
         rp['xrange'] = (ileft,iright)
-        rp['mean'] = np.mean(self.data[Y][ileft:iright]).astype('f4')
-        rp['std'] = np.std(self.data[Y][ileft:iright]).astype('f4')
+        y = np.array(self.data[Y][ileft:iright])
+        rp['mean'] = y.mean().astype('f4')
+        rp['std'] = y.std().astype('f4')
+        rp['p2p'] = (y.max() - y.min()).astype('f4')
         return r
 
     def get_visibleData(self):
@@ -612,7 +613,7 @@ class CustomViewBox(pg.ViewBox):
         setDatasets = self.menu.addAction('Datasets &Options')
         setDatasets.triggered.connect(self.changed_datasetOptions)
 
-        _statistics = self.menu.addAction('Show Statistics')
+        _statistics = self.menu.addAction('&Print Statistics')
         _statistics.triggered.connect(self.show_statistics)
 
         _yProjection = self.menu.addAction('Show yProjection')
@@ -687,7 +688,7 @@ class CustomViewBox(pg.ViewBox):
         pos = (vr[vid][1] + vr[vid][0])/2.
         pen = pg.mkPen(color='b', width=1, style=QtCore.Qt.DotLine)
         cursor = pg.InfiniteLine(pos=pos, pen=pen, movable=True, angle=angle
-        , label=self.cursor_text(pos,vid), labelOpts={'color':(0,0,0)})#,'fill':(0,255,255)})
+        , label=self.cursor_text(pos,vid), labelOpts={'color':TxtColor})#,'fill':(0,255,255)})
         cursor.sigPositionChangeFinished.connect(\
         (partial(self.cursorPositionChanged,cursor)))
         self.cursors.add(cursor)
@@ -713,8 +714,8 @@ class CustomViewBox(pg.ViewBox):
         rowCount,columnCount = 0,8
         tbl = QW.QTableWidget(rowCount, columnCount, dlg)
         tbl.setHorizontalHeaderLabels(
-              ['Enb','Name','PV','Color','Width','Symbol','Size',''])
-        widths = (30,    50, 100,     30,     80,      40,    80,80)
+                 ['','Name','PV','Color','Width','Sym','Size',''])
+        widths = (10,    50, 100,     20,     80,   35,    80,80)
         for column,width in enumerate(widths):
             tbl.setColumnWidth(column, width)
         tbl.setShowGrid(False)
@@ -728,18 +729,22 @@ class CustomViewBox(pg.ViewBox):
             col = 0
             cbox = QW.QCheckBox()
             cbox.setChecked(dataset.enabled)
-            #cbox.stateChanged.connect(lambda x: self.enable_dataset(x))
             cbox.stateChanged.connect(self.enable_dataset)
             cbox.setObjectName(curveName)
             tbl.setCellWidget(row, col, cbox)
 
             col+=1
             adoparName = dataset.adoPars[0][0]
-            tbl.setItem(row, col, QW.QTableWidgetItem(curveName))
+            item = QW.QTableWidgetItem(curveName)
+            #item.setTextAlignment(QtCore.Qt.AlignRight)
+            tbl.setItem(row, col, item)
 
             col+=1
             printv(f'dataset:{adoparName}')
-            tbl.setItem(row, col, QW.QTableWidgetItem(adoparName))
+            txt = adoparName[-24:]
+            txt = txt[:12]+'\n'+txt[12:]
+            item = QW.QTableWidgetItem(txt)
+            tbl.setItem(row, col, QW.QTableWidgetItem(item))
 
             col+=1
             # color button for line
@@ -839,12 +844,9 @@ class CustomViewBox(pg.ViewBox):
             update=True, disableAutoRange=True)
 
     def show_statistics(self):
-        if PVPlot.statisticsWindow is None:
-            PVPlot.statisticsWindow = PopupWindow()
-        txt = get_statistics()
-        PVPlot.statisticsWindow.label.setText(txt)
-        PVPlot.statisticsWindow.show()
-        PVPlot.statistics = {}
+        #print(f'print statistics for {self.dockNum}')
+        PVPlot.statDock = self.dockNum
+        PVPlot.actionStatistics()
 
     def show_yProjection(self):
         if PVPlot.yProjectionWindow is None:
@@ -955,6 +957,7 @@ class PVPlot():
     yProjectionWindow = None
     yProjectionPlotItem = None
     stopped = False
+    statDock = 0
 
     def start():
         pargs = PVPlot.pargs
@@ -974,10 +977,12 @@ class PVPlot():
         # Shortcuts
         shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+H"), PVPlot.qWin)
         shortcut.activated.connect(PVPlot.actionHelp)
+        shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+P"), PVPlot.qWin)
+        shortcut.activated.connect(partial(PVPlot.actionStatistics))
         shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+S"), PVPlot.qWin)
-        shortcut.activated.connect(partial(PVPlot.actionStop,True))
-        shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+Q"), PVPlot.qWin)
-        shortcut.activated.connect(partial(PVPlot.actionStop,False))
+        shortcut.activated.connect(partial(PVPlot.actionStop))
+        #shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+Q"), PVPlot.qWin)
+        #shortcut.activated.connect(partial(PVPlot.actionStop,False))
         shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+U"), PVPlot.qWin)
         shortcut.activated.connect(PVPlot.actionUnzoom)
         from . import helptxt
@@ -1057,12 +1062,13 @@ class PVPlot():
 
     def stop(state):
         PVPlot.stopped = state
+        suffix = ' is stopped'
         if state == True:
             PVPlot.qTimer.stop()
-            title = PVPlot.qWin.windowTitle()+' Stopped'
+            title = PVPlot.qWin.windowTitle()+suffix
         else:
             PVPlot.qTimer.start(int(PVPlot.pargs.sleepTime*1000))
-            title = PVPlot.qWin.windowTitle().replace(' Stopped','')
+            title = PVPlot.qWin.windowTitle().replace(suffix,'')
         PVPlot.qWin.setWindowTitle(title)       
 
     #``````````Shorthcut handlers
@@ -1071,8 +1077,9 @@ class PVPlot():
         PVPlot.helpWin.label.setText(PVPlot.helptxt)
         PVPlot.helpWin.show()
 
-    def actionStop(state:bool):
-        PVPlot.stop(state)
+    def actionStop():
+        PVPlot.stopped = not PVPlot.stopped
+        PVPlot.stop(PVPlot.stopped)
 
     def actionUnzoom():
         md = PVPlot.mapOfDocks
@@ -1080,3 +1087,25 @@ class PVPlot():
         for dockNum in docks:
             vb = PVPlot.mapOfPlotWidgets[dockNum].getPlotItem().getViewBox()
             vb.unzoom()
+
+    def actionStatistics():
+        #print(f'>actionStatistics {PVPlot.statDock}')
+        def get_statistics():
+            statistics = {}
+            for dataset in MapOfDatasets.dtsDict.values():
+                if dataset.dockNum != PVPlot.statDock:
+                    continue
+                s = dataset.get_statistics()
+                if len(s) != 0:
+                    statistics.update(s)
+            txt = ('Parameter,\tRange \tMean  \tSTD   \tPeak2Peak\n'
+                   '----------\t------\t------\t------\t---------\n')
+            for key,v in statistics.items():
+                txt += f'{key}:\t{v["xrange"]}\t{v["mean"]:.6g}\t{v["std"]:.6g}\t{v["p2p"]:.6g}\n'
+            return txt
+        if PVPlot.statisticsWindow is None:
+            PVPlot.statisticsWindow = PopupWindow()
+        txt = get_statistics()
+        PVPlot.statisticsWindow.label.setText(txt)
+        PVPlot.statisticsWindow.show()
+        PVPlot.statistics = {}
