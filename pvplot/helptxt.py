@@ -1,5 +1,5 @@
 txt="""Shortcuts:
-^p: Print/Update statistics
+^m: Show statistics: mean, sigma, peak2peak of visible curves.
 ^s: Stop/Start
 ^u: Unzoom
 """

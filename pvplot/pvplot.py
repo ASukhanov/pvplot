@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v1.3.3 2024-08-21'# Statistics shows full name of parameter
+__version__ = 'v1.3.4 2024-08-30'# Statistics is table, time2plot corrected, close all windows on exit.
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
-#TODO: Use rich text in statistics, make it as table or use pprint
 
 import sys, os, time, datetime
 timer = time.perf_counter
@@ -147,23 +146,118 @@ def split_slice(parNameSlice):
     else:
         vslice = (r0, int(vrange[1]))
     return devParSlice[0], vslice
+
+def get_statistics():
+    statList = []
+    for dataset in MapOfDatasets.dtsDict.values():
+        #if dataset.dockNum != PVPlot.statDock:
+        #    continue
+        s = dataset.get_statistics()
+        #print(f's: {s}')
+        if len(s) != 0:
+            for key,v in s.items():
+                statList.append([key, *v["xrange"],
+                f'{v["mean"]:.6g}', f'{v["std"]:.6g}',
+                f'{v["p2p"]:.6g}'])
+    return statList
+
+class PopupWindow(QW.QWidget): 
+    """ This "window" is a QWidget. If it has no parent, it
+    will appear as a free-floating window as we want.
+    Note: The created window will not be closed on app exit.
+    To make it happen, the MainWindow should call close this widget in its closeEvent() 
+    """
+    def __init__(self):
+        super().__init__()
+        qr = PVPlot.qWin.geometry()
+        self.setGeometry(QtCore.QRect(qr.x(), qr.y(), 0, 0))
+        self.setWindowTitle('Statistics')
+        layout = QW.QVBoxLayout()
+        self.label = QW.QLabel()
+        self.label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        layout.addWidget(self.label)
+        self.setLayout(layout)
+
+class TableModel(QtCore.QAbstractTableModel):
+    def __init__(self, data, headers):
+        super(TableModel, self).__init__()
+        self._data = data
+        self.headers = headers
+
+    def headerData(self, section: int, orientation: QtCore.Qt.Orientation, role=QtCore.Qt.DisplayRole):
+        if role == QtCore.Qt.DisplayRole and orientation == QtCore.Qt.Horizontal:
+            try:    r = self.headers[section]
+            except: r = f's{section+1}'
+            return r
+
+    def data(self, index, role):
+        if role == QtCore.Qt.DisplayRole:
+            # See below for the nested-list data structure.
+            # .row() indexes into the outer list,
+            # .column() indexes into the sub-list
+            return self._data[index.row()][index.column()]
+
+    def rowCount(self, parent=QtCore.QModelIndex()):
+        # The length of the outer list.
+        return len(self._data)
+
+    def columnCount(self, parent=QtCore.QModelIndex()):
+        # The following takes the first sub-list, and returns
+        # the length (only works if all rows are an equal length)
+        return len(self._data[0])
+
+    def refresh_data(self, data):
+        self._data = data
+        #print(f'>refresh_data: {self._data}')
+        topLeft = self.createIndex(0, 0)
+        bottomRight = self.createIndex(self.rowCount(), self.columnCount())
+        self.dataChanged.emit(topLeft, bottomRight)
+
+class TableWindow(QW.QWidget):
+    """
+    This "window" is a QWidget. If it has no parent, it
+    will appear as a free-floating window.
+    """
+    def __init__(self, data, headers=[]):
+        super().__init__()
+        self.setWindowTitle('Statistics')
+        layout = QW.QVBoxLayout()
+        self.table = QW.QTableView()
+        self.model = TableModel(data, headers)
+        self.table.setModel(self.model)
+        hh = self.table.horizontalHeader()       
+        #DNW#hh.setSectionResizeMode(QW.QHeaderView.ResizeToContents)
+        #hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(0, QW.QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(1, QW.QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(2, QW.QHeaderView.ResizeMode.ResizeToContents)
+        layout.addWidget(self.table)
+        self.setLayout(layout)
+
+        qr = PVPlot.qWin.geometry()
+        '''
+        vh = self.table.verticalHeader()
+        extra = (30,30)
+        sz = (hh.length() + vh.width() + extra[X],
+                     vh.length() + hh.height() + extra[Y])
+        self.setGeometry(QtCore.QRect(qr.x(), qr.y(), sz[0], sz[1]))
+        '''
+        self.move(qr.x(), qr.y())
+        self.table.setShowGrid(False)
+        self.table.setSizeAdjustPolicy(
+            QW.QAbstractScrollArea.AdjustToContents)
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 def update_data():
     """ called on QtCore.qTimer() event to update plots."""
     tstart = timer()
     tt = round(time.time(),6)
-    if tt > PVPlot.lastPlotTime + PVPlot.minPlottingPeriod:
-        time2plot = True
-        PVPlot.lastPlotTime = tt
-    else:
-        time2plot = False
 
     for dataset in MapOfDatasets.dtsDict.values():
-        dataset.update_plot(time2plot)
+        dataset.update_plot()
         if dataset.dataChanged:
-            printvv(f'updating {dataset.adoPars}')
-            if PVPlot.statisticsWindow is None:
-                continue
+            if tt > dataset.lastPlotted + PVPlot.minPlottingPeriod:
+                dataset.lastPlotted = tt
+                dataset.plot(tt)
 
     if PVPlot.perfmon:
         v = timer()-tstart
@@ -248,6 +342,7 @@ class Dataset():
         self.timeAxis = False
         self.statistics = {}
         self.enabled = True
+        self.lastPlotted = 0
 
         # ``````````````````` Add plotItem ``````````````````````````````````````
         #dockNum = name.split('.')[0]
@@ -382,7 +477,7 @@ class Dataset():
             #TODO:pxMode = self.pxMode,
         )
 
-    def update_plot(self, time2plot):
+    def update_plot(self):
         curvePars = self.adoPars
         yd,ts = None,None
         try:
@@ -456,9 +551,6 @@ class Dataset():
                 self.data[Y][:tmp[Y].shape[0]] = tmp[Y]
                 self.data[X][:tmp[X].shape[0]] = tmp[X]
                 #printi(f'adjust {self.name} from {tmp[X].shape} to {self.data[X].shape}')
-
-            if time2plot:
-                self.plot(ts)
 
     def _visibleRange(self):
         npt = self.dataPtr
@@ -545,23 +637,6 @@ class MapOfDatasets():
         dataset = MapOfDatasets.dtsDict[name]
         dataset.plotWidget.removeItem(dataset.plotItem)
         del MapOfDatasets.dtsDict[dataset.name]
-
-class PopupWindow(QW.QWidget): 
-    """ This "window" is a QWidget. If it has no parent, it
-    will appear as a free-floating window as we want.
-    Note: The created window will not be closed on app exit.
-    To make it happen, the MainWindow should call close this widget in its closeEvent() 
-    """
-    def __init__(self):
-        super().__init__()
-        qr = PVPlot.qWin.geometry()
-        self.setGeometry(QtCore.QRect(qr.x(), qr.y(), 0, 0))
-        self.setWindowTitle('Statistics')
-        layout = QW.QVBoxLayout()
-        self.label = QW.QLabel()
-        self.label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        layout.addWidget(self.label)
-        self.setLayout(layout)
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 #`````````````````````````````````````````````````````````````````````````````
 class CustomViewBox(pg.ViewBox):
@@ -613,10 +688,10 @@ class CustomViewBox(pg.ViewBox):
         setDatasets = self.menu.addAction('Datasets &Options')
         setDatasets.triggered.connect(self.changed_datasetOptions)
 
-        _statistics = self.menu.addAction('&Print Statistics')
+        _statistics = self.menu.addAction('Show &Mean,sigma')
         _statistics.triggered.connect(self.show_statistics)
 
-        _yProjection = self.menu.addAction('Show yProjection')
+        _yProjection = self.menu.addAction('Show &YProjection')
         _yProjection.triggered.connect(self.show_yProjection)
 
         cursorMenu = self.menu.addMenu('Add &Cursor')
@@ -638,7 +713,7 @@ class CustomViewBox(pg.ViewBox):
         self.menu.addAction(labelY)
                    
         backgroundAction = QW.QWidgetAction(self.menu)
-        backgroundGui = QW.QCheckBox('&Black background')
+        backgroundGui = QW.QCheckBox('Black background')
         backgroundGui.stateChanged.connect(
           lambda x: self.setBackgroundColor(\
           'k' if x == QtCore.Qt.Checked else 'w'))
@@ -646,7 +721,7 @@ class CustomViewBox(pg.ViewBox):
         self.menu.addAction(backgroundAction)
 
         legenAction = QW.QWidgetAction(self.menu)
-        legendGui = QW.QCheckBox('&Legend')
+        legendGui = QW.QCheckBox('Legend')
         legendGui.setChecked(True)
         legendGui.stateChanged.connect(lambda x: self.set_legend(x))
         legenAction.setDefaultWidget(legendGui)
@@ -845,7 +920,7 @@ class CustomViewBox(pg.ViewBox):
 
     def show_statistics(self):
         #print(f'print statistics for {self.dockNum}')
-        PVPlot.statDock = self.dockNum
+        #PVPlot.statDock = self.dockNum
         PVPlot.actionStatistics()
 
     def show_yProjection(self):
@@ -856,7 +931,7 @@ class CustomViewBox(pg.ViewBox):
 
         PVPlot.yProjectionWindow.show()
         PVPlot.yProjectionWindow.setWindowTitle(
-            f'Vertical projection of {self.dataset.adoPars[0][0].rsplit(":",1)[1]}')
+            f'Vertical projection of {self.dataset.name}')
         self.dataset.show_yProjection()
 
     def enable_dataset(self, state):
@@ -936,6 +1011,15 @@ def parse_input_parameters(pargs):
             tmpClass.DOCKS[0][parm] =  parms
         return tmpClass
 
+class MainWindow(QW.QMainWindow):
+    def closeEvent(self,event):
+        print('Closing all windows')
+        try:    PVPlot.statisticsWindow.close()
+        except: pass
+        try:    PVPlot.helpWin.close()
+        except: pass
+        event.accept()
+
 class PVPlot():
     config = None
     pargs = None
@@ -957,7 +1041,7 @@ class PVPlot():
     yProjectionWindow = None
     yProjectionPlotItem = None
     stopped = False
-    statDock = 0
+    #statDock = 0
 
     def start():
         pargs = PVPlot.pargs
@@ -966,7 +1050,7 @@ class PVPlot():
         try:    os.environ["QT_SCALE_FACTOR"] = str(pargs.zoomin)
         except: pass
         qApp = QApplication([])
-        PVPlot.qWin = QMainWindow()
+        PVPlot.qWin = MainWindow()
         PVPlot.dockArea = dockarea.DockArea()
         PVPlot.qWin.setCentralWidget(PVPlot.dockArea)
         PVPlot.qWin.resize(1000,500)
@@ -977,12 +1061,12 @@ class PVPlot():
         # Shortcuts
         shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+H"), PVPlot.qWin)
         shortcut.activated.connect(PVPlot.actionHelp)
-        shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+P"), PVPlot.qWin)
+        shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+M"), PVPlot.qWin)
         shortcut.activated.connect(partial(PVPlot.actionStatistics))
+        #shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+O"), PVPlot.qWin)
+        #shortcut.activated.connect(partial(PVPlot.actionDatasetOptions))
         shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+S"), PVPlot.qWin)
         shortcut.activated.connect(partial(PVPlot.actionStop))
-        #shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+Q"), PVPlot.qWin)
-        #shortcut.activated.connect(partial(PVPlot.actionStop,False))
         shortcut = QW.QShortcut(QtGui.QKeySequence("Ctrl+U"), PVPlot.qWin)
         shortcut.activated.connect(PVPlot.actionUnzoom)
         from . import helptxt
@@ -1090,22 +1174,10 @@ class PVPlot():
 
     def actionStatistics():
         #print(f'>actionStatistics {PVPlot.statDock}')
-        def get_statistics():
-            statistics = {}
-            for dataset in MapOfDatasets.dtsDict.values():
-                if dataset.dockNum != PVPlot.statDock:
-                    continue
-                s = dataset.get_statistics()
-                if len(s) != 0:
-                    statistics.update(s)
-            txt = ('Parameter\t\tRange \tMean  \tSTD   \tPeak2Peak\n'
-                   '---------\t\t------\t------\t------\t---------\n')
-            for key,v in statistics.items():
-                txt += f'{key}:\t{v["xrange"]}\t{v["mean"]:.6g}\t{v["std"]:.6g}\t{v["p2p"]:.6g}\n'
-            return txt
+        sl = get_statistics()
         if PVPlot.statisticsWindow is None:
-            PVPlot.statisticsWindow = PopupWindow()
-        txt = get_statistics()
-        PVPlot.statisticsWindow.label.setText(txt)
-        PVPlot.statisticsWindow.show()
-        PVPlot.statistics = {}
+            header = ['Parameter','XMin','XMax','Mean','StDev','Peak2Peak']
+            PVPlot.statisticsWindow = TableWindow(sl, header)
+        PVPlot.statisticsWindow.model.refresh_data(sl)
+        PVPlot.statisticsWindow.show()        
+        
