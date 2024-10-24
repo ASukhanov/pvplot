@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v1.3.4 2024-08-30'# Statistics is table, time2plot corrected, close all windows on exit.
+__version__ = 'v1.3.5 2024-10-23'# cad_epics integrated
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
@@ -63,7 +63,7 @@ def prettyDict(rDict, lineLimit=75):
                 r += croppedText(f' {parVals}',lineLimit)+'\n'
     return r
 
-try:    from cad_epics import epics as EPICSAccess
+try:    from pvplot import cad_epics as EPICSAccess
 except Exception as e:
     EPICSAccess = None 
     printw(f'EPICS devices are not supported on this host: {e}')
