@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v1.3.6 2024-11-11'# removed handling of prefixlength in PVPlot
+__version__ = 'v1.4.0 2024-11-12'# fixed: changing dataOptions when plot is stopped
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
@@ -81,9 +81,6 @@ except Exception as e:
     printw(f'ADO devices are not supported on this host: {e}')
     ADOAccess = None
 
-def cprint(msg): 
-    print('cprint:'+msg)
-
 def get_pv(adopar:str, prop='value'):
     #print(f'>get_pv {adopar}')
     adopar, vslice = split_slice(adopar)
@@ -116,24 +113,16 @@ def get_pv(adopar:str, prop='value'):
         val = val[vslice[0]:vslice[1]]
     return val, ts
 
-def change_plotOption(curveName,color=None,width=None,symbolSize=None,scolor=None):
+def change_plotOption(curveName,color=None,width=None,symbolSize=None):
     dataset = MapOfDatasets.dtsDict[curveName]
     if color != None:
-        prop = 'color'
         dataset.pen.setColor(color)
     if width != None:
-        prop = 'width'
         dataset.width = width
         dataset.pen.setWidth(width)
-    elif symbolSize!=None:
+    if symbolSize!=None:
         dataset.symbolSize = symbolSize
-    elif scolor!=None:
-        dataset.symbolBrush = scolor
-    else: return
-    try:
-        dataset.plotItem.setPen(
-          dataset.pen)
-    except: cprint('could not set '+prop+' for '+str(curveName))
+    dataset.plot(time.time())
 
 def split_slice(parNameSlice):
     """Decode 'name[n1:n2]' to 'name',[n1:n2]"""
@@ -163,7 +152,7 @@ def get_statistics():
                 f'{v["p2p"]:.6g}'])
     return statList
 
-class PopupWindow(QW.QWidget): 
+class PopupHelp(QW.QWidget): 
     """ This "window" is a QWidget. If it has no parent, it
     will appear as a free-floating window as we want.
     Note: The created window will not be closed on app exit.
@@ -173,7 +162,7 @@ class PopupWindow(QW.QWidget):
         super().__init__()
         qr = PVPlot.qWin.geometry()
         self.setGeometry(QtCore.QRect(qr.x(), qr.y(), 0, 0))
-        self.setWindowTitle('Statistics')
+        self.setWindowTitle('PVPlot short help')
         layout = QW.QVBoxLayout()
         self.label = QW.QLabel()
         self.label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
@@ -456,7 +445,7 @@ class Dataset():
         # Plot the dataset. It may be several updates between these calls.
         if self.lastTimePlotted == ts:
             return
-        printv(f'>plot: {self.name}')
+        #printv(f'>plot: {self.name}')
         self.lastTimePlotted = ts
         #print(f'>plot: {self.name, {self.dataPtr}, round(ts,3)}')
         x = self.data[X][:self.dataPtr]
@@ -701,6 +690,11 @@ class CustomViewBox(pg.ViewBox):
             action = cursorMenu.addAction(cursor)
             action.triggered.connect(partial(self.cursorAction,cursor))
         
+        # popup help
+        phelp = self.menu.addAction("&help")
+        phelp.triggered.connect(lambda: PVPlot.actionHelp())
+
+        # Labels
         labelX = QW.QWidgetAction(self.menu)
         self.labelXGui = QW.QLineEdit('LabelX')
         self.labelXGui.returnPressed.connect(
@@ -791,7 +785,7 @@ class CustomViewBox(pg.ViewBox):
         rowCount,columnCount = 0,8
         tbl = QW.QTableWidget(rowCount, columnCount, dlg)
         tbl.setHorizontalHeaderLabels(
-                 ['','Name','PV','Color','Width','Sym','Size',''])
+                 ['','Name','PV','Color','Width','Symbol','Size',''])
         widths = (10,    50, 100,     20,     80,   35,    80,80)
         for column,width in enumerate(widths):
             tbl.setColumnWidth(column, width)
@@ -851,7 +845,7 @@ class CustomViewBox(pg.ViewBox):
             tbl.setCellWidget(row, col, self.symbol)
 
             col+=1
-            # slider for changing the line width
+            # slider for changing symbol size
             symbolSizeSlider = QW.QSlider()
             symbolSizeSlider.setObjectName(curveName)
             symbolSizeSlider.setOrientation(QtCore.Qt.Horizontal)
@@ -872,14 +866,14 @@ class CustomViewBox(pg.ViewBox):
         from the curve setting"""
         dtsetName = str(self.sender().objectName())
         symbol = str(self.sender().itemText(x))
-        printv('set_symbol for '+dtsetName+' to '+symbol)
         dataset = MapOfDatasets.dtsDict[dtsetName]
+        #print(f'set_symbol for {dtsetName} to {symbol} {dataset.pen.color()}')
         if symbol != ' ':
             dataset.symbol = symbol
             if not dataset.symbolSize:
                 dataset.symbolSize = 4 # default size
-            if not dataset.symbolBrush:
-                dataset.symbolBrush = dataset.pen.color() # symbol color = line color
+            dataset.symbolBrush = dataset.pen.color() # symbol color = line color
+            dataset.plot(time.time())#ISSUE: the dataset.plotItem.setSymbol does not work
         else:
             # no symbols - remove the scatter plot
             dataset.symbol = None
@@ -1163,7 +1157,7 @@ class PVPlot():
 
     #``````````Shorthcut handlers
     def actionHelp():
-        PVPlot.helpWin = PopupWindow()
+        PVPlot.helpWin = PopupHelp()
         PVPlot.helpWin.label.setText(PVPlot.helptxt)
         PVPlot.helpWin.show()
 
