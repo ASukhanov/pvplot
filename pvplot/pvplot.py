@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs, ADO and LITE parameters.
 """
-__version__ = 'v1.3.5 2024-10-23'# cad_epics integrated
+__version__ = 'v1.3.6 2024-11-11'# removed handling of prefixlength in PVPlot
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
@@ -63,7 +63,7 @@ def prettyDict(rDict, lineLimit=75):
                 r += croppedText(f' {parVals}',lineLimit)+'\n'
     return r
 
-try:    from pvplot import cad_epics as EPICSAccess
+try:    from . import cad_epics as EPICSAccess
 except Exception as e:
     EPICSAccess = None 
     printw(f'EPICS devices are not supported on this host: {e}')
@@ -87,13 +87,15 @@ def cprint(msg):
 def get_pv(adopar:str, prop='value'):
     #print(f'>get_pv {adopar}')
     adopar, vslice = split_slice(adopar)
-    access = PVPlot.access.get(adopar[:2], (ADOAccess,0))
-    access,prefixLength = PVPlot.access.get(adopar[:2], (ADOAccess,0))
+    try:
+        access = PVPlot.access[adopar[:2]]
+        adopar = adopar[2:]
+    except:
+        access = PVPlot.ADOAccess
     if access is None:
         printe(f'No access method for `{adopar}`')
         sys.exit(1)
-
-    pvTuple = tuple(adopar[prefixLength:].rsplit(':',1))
+    pvTuple = tuple(adopar.rsplit(':',1))
     rd = access.get(pvTuple)[pvTuple]
     val = rd['value']
     try:
@@ -1031,7 +1033,7 @@ class PVPlot():
     subscribedParMap = {}
     perfmon = False # option for performance monitoring
     legend = {}# unfortunately we have to keep track of legends
-    access = {'E:':(EPICSAccess,2), 'L:':(LITEAccess,2)}
+    access = {'E:':EPICSAccess, 'L:':LITEAccess}
     qWin = None
     qTimer = QtCore.QTimer()
     dockArea = None
@@ -1042,6 +1044,10 @@ class PVPlot():
     yProjectionPlotItem = None
     stopped = False
     #statDock = 0
+
+    def addAccess(prefix:str, access):
+        # Method to add external access object.
+        PVPlot[prefix] = access
 
     def start():
         pargs = PVPlot.pargs
