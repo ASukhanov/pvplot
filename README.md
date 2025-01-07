@@ -4,7 +4,7 @@ Package for dynamic plotting of EPICS PVs (both CA and PVA) and [liteServer data
 ## Examples
 - Sliced array plot of EPICS Channel Access [testAsynPortDriverApp](https://epics.anl.gov/modules/soft/asyn/R4-38/asynDriver.html#testAsynPortDriverApp):<br>
 `python -m pvplot -s0.01 -a'E:testAPD:scope1:' 'Waveform_RBV[1:500]'`
-- Waveform from EPICS PVaccess [simScope](https://github.com/ASukhanov/p4pex):<br>
+- Waveform of EPICS PVaccess [simScope](https://github.com/ASukhanov/p4pex):<br>
 `python -m pvplot P:simScope1:Waveform_RBV`
 - Time-series plot (stripchart) of analog inputs of a LabJack U3-HV instrument, served by liteLabjack:<br>
 `python -m pvplot -a'L:localhost:dev1' 'tempU3 ADC_HV[0] ADC_HV[1] ADC_HV[2] ADC_HV[3] ADC_LV'`
