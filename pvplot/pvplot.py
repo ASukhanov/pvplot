@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Plotting package for EPICS PVs, ADO and LITE parameters.
+"""Plotting package for EPICS PVs (CA and PVA), LITE and ADO parameters.
 """
-__version__ = 'v1.4.0 2024-11-12'# fixed: changing dataOptions when plot is stopped
+__version__ = 'v1.5.0 2024-12-31'# added EPICS PVAccess support using p4p
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
@@ -67,6 +67,10 @@ try:    from . import cad_epics as EPICSAccess
 except Exception as e:
     EPICSAccess = None 
     printw(f'EPICS devices are not supported on this host: {e}')
+try:    from . import cad_pvaccess as PVAccess
+except Exception as e:
+    PVAccess = None 
+    printw(f'EPICS PVA devices are not supported on this host: {e}')
 try:
     import liteaccess as liteAccess 
     LITEAccess = liteAccess.Access
@@ -82,7 +86,7 @@ except Exception as e:
     ADOAccess = None
 
 def get_pv(adopar:str, prop='value'):
-    #print(f'>get_pv {adopar}')
+    #print(f'>pvp get_pv {adopar}')
     adopar, vslice = split_slice(adopar)
     try:
         access = PVPlot.access[adopar[:2]]
@@ -105,7 +109,7 @@ def get_pv(adopar:str, prop='value'):
         pass
     try:
         ts = rd['timestamp']# EPICS and LITE
-    except: # ADO
+    except: # ADO & PVA
         ts = rd['timestampSeconds'] + rd['timestampNanoSeconds']*1.e-9
 
     #printv(f"get_pv {adopar}: {rd['value']} {vslice}")
@@ -586,7 +590,7 @@ class MapOfDatasets():
     
     def add(dockNum:int, mapOfCurves):
         """add new datasets, the adoPars is the space delimited string of 
-        source ado:parameters."""
+        source device:parameters."""
         printv(f'>MapOfDatasets.add({dockNum, mapOfCurves})')
         for i, kv in enumerate(mapOfCurves.items()):
             curveName,devList = kv
@@ -599,7 +603,7 @@ class MapOfDatasets():
             pnameAndCount = []
             for adoPar in devList:
                 adoPar = adoPar.lstrip()#remove leading whitespaces
-                printv(f'adoPar: {adoPar}')
+                #print(f'adoPar: {adoPar}')
                 if adoPar.startswith('device('):
                     e = adoPar.index(')')
                     rest = adoPar[e+1:]# it could be arithmetics
@@ -1027,7 +1031,7 @@ class PVPlot():
     subscribedParMap = {}
     perfmon = False # option for performance monitoring
     legend = {}# unfortunately we have to keep track of legends
-    access = {'E:':EPICSAccess, 'L:':LITEAccess}
+    access = {'E:':EPICSAccess, 'L:':LITEAccess, 'P:':PVAccess}
     qWin = None
     qTimer = QtCore.QTimer()
     dockArea = None
