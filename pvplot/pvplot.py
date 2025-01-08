@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs (CA and PVA), LITE and ADO parameters.
 """
-__version__ = 'v1.5.0 2024-12-31'# added EPICS PVAccess support using p4p
+__version__ = 'v1.5.1 2025-01-08'# fix importing of cad_epics an cad_pvaccess
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
+#TODO: handle XCELLNAME in mon file
 
 import sys, os, time, datetime
 timer = time.perf_counter
@@ -64,17 +65,25 @@ def prettyDict(rDict, lineLimit=75):
     return r
 
 try:    from . import cad_epics as EPICSAccess
-except Exception as e:
-    EPICSAccess = None 
-    printw(f'EPICS devices are not supported on this host: {e}')
+except: 
+    try:    from cad_epics import epics as EPICSAccess
+    except: pass
+try:    print(f'EPICS Channels Access interface {EPICSAccess.__version__}')
+except:
+        EPICSAccess = None 
+        printw(f'EPICS CA devices are not supported on this host')
 try:    from . import cad_pvaccess as PVAccess
-except Exception as e:
-    PVAccess = None 
-    printw(f'EPICS PVA devices are not supported on this host: {e}')
+except:
+    try:    from cad_pvaccess import pvaccess as PVAccess
+    except: pass
+try:    print(f'EPICS PVAccess interface {PVAccess.__version__}')
+except:
+        PVAccess = None
+        printw(f'EPICS PVA devices are not supported on this host')
 try:
     import liteaccess as liteAccess 
     LITEAccess = liteAccess.Access
-    print(f'liteAccess {liteAccess.__version__}')
+    print(f'liteAccess interface {liteAccess.__version__}')
 except Exception as e:
     printw(f'LITE devices are not supported on this host: {e}')
     LITEAccess = None
@@ -92,7 +101,7 @@ def get_pv(adopar:str, prop='value'):
         access = PVPlot.access[adopar[:2]]
         adopar = adopar[2:]
     except:
-        access = PVPlot.ADOAccess
+        access = ADOAccess
     if access is None:
         printe(f'No access method for `{adopar}`')
         sys.exit(1)
@@ -967,7 +976,7 @@ def add_curves(dockNum:int, curveMap:str):
     docks = PVPlot.mapOfDocks.keys()
     printv(f'>addcurves curves {curveMap} to {curves,docks}')
     if dockNum not in docks:
-        printv(f'adding new dock{dockNum}')
+        printv(f'adding new dock{type(dockNum),dockNum}')
         PVPlot.mapOfDocks[dockNum] = dockarea.Dock(str(dockNum),
           size=(500,200), hideTitle=True)
         if dockNum == 0:
@@ -995,7 +1004,7 @@ def parse_input_parameters(pargs):
     fn = pargs.file
     if fn:
         sys.path.append(pargs.configDir)
-        printv(f'importing {fn}')
+        print(f'Config file: {pargs.configDir}/{fn}')
         try:
             ConfigModule = import_module(fn)
             configFormat = ConfigModule.configFormat
@@ -1096,7 +1105,7 @@ class PVPlot():
                 for par in pargs.dock:
                     dockNum = par[0][0]
                     adopar = par[0][1:].lstrip()
-                    add_curves(dockNum, {adopar:adopar})
+                    add_curves(int(dockNum), {adopar:adopar})
             else:
                 # plots for the main dock
                 if not ',' in pargs.parms:
