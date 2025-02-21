@@ -2,7 +2,7 @@
 """Dynamic plotting tool for control system frameworks.
 Frameworks supported: EPICS, ADO, LiteServer.
 The framework is distinguished by adding a prefix to Process Variable names:
-'E:' - for EPICS, 'L:" - for LiteServer.
+'E:' for EPICS CA, 'V:' for EPICS PVA, 'L:' for LiteServer.
 """
 import sys,os
 from . import pvplot

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs (CA and PVA), LITE and ADO parameters.
 """
-__version__ = 'v1.5.1 2025-01-08'# fix importing of cad_epics an cad_pvaccess
+__version__ = 'v1.6.0 2025-02-12'# re-factoring, PVA prefix changed to V.
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
@@ -64,41 +64,74 @@ def prettyDict(rDict, lineLimit=75):
                 r += croppedText(f' {parVals}',lineLimit)+'\n'
     return r
 
-try:    from . import cad_epics as EPICSAccess
-except: 
-    try:    from cad_epics import epics as EPICSAccess
-    except: pass
-try:    print(f'EPICS Channels Access interface {EPICSAccess.__version__}')
-except:
-        EPICSAccess = None 
-        printw(f'EPICS CA devices are not supported on this host')
-try:    from . import cad_pvaccess as PVAccess
-except:
-    try:    from cad_pvaccess import pvaccess as PVAccess
-    except: pass
-try:    print(f'EPICS PVAccess interface {PVAccess.__version__}')
-except:
-        PVAccess = None
-        printw(f'EPICS PVA devices are not supported on this host')
-try:
-    import liteaccess as liteAccess 
-    LITEAccess = liteAccess.Access
-    print(f'liteAccess interface {liteAccess.__version__}')
-except Exception as e:
-    printw(f'LITE devices are not supported on this host: {e}')
-    LITEAccess = None
-try:    
-    from cad_io import adoaccess
-    ADOAccess = adoaccess.IORequest()
-except Exception as e:
-    printw(f'ADO devices are not supported on this host: {e}')
-    ADOAccess = None
+AccessModule = {}
+def check_pv(adopar:str):
+    """Check if PV exists, should be called once, prior to any get_pv()"""
+    prefix = adopar[:2]
+    if prefix[1] != ':':# Set default namespace as ADO
+       prefix = 'A:'
+    if prefix not in AccessModule:
+        if prefix == 'E:':#Check if EPICS caproto interface is available
+            try:
+                from . import cad_epics as EPICSAccess
+            except: 
+                try:    from cad_epics import epics as EPICSAccess
+                except: pass
+            try:
+                print(f'EPICS Channels Access interface {EPICSAccess.__version__}')
+                AccessModule[prefix] = EPICSAccess
+            except:
+                printe(f'EPICS PVA devices are not supported on this host')
+                sys.exit(1)
+        elif prefix == 'V:':# Check if EPICS PVAccess interface is available
+            try:
+                from . import cad_pvaccess as PVAccess
+            except:
+                try:    from cad_pvaccess import pvaccess as PVAccess
+                except: pass
+            try:
+                print(f'EPICS PVAccess interface {PVAccess.__version__}')
+                AccessModule[prefix] = PVAccess
+            except:
+                printe(f'EPICS PVA devices are not supported on this host')
+                sys.exit(1)
+        elif prefix == 'L:':# Check if LiteServer interface is available
+            try:
+                import liteaccess as liteAccess 
+                print(f'liteAccess interface {liteAccess.__version__}')
+                AccessModule[prefix] = liteAccess.Access
+            except Exception as e:
+                printe(f'LITE devices are not supported on this host: {e}')
+                sys.exit(1)
+        elif prefix == 'A:':# Check if ADO interface is available
+            try:
+                from cad_io import adoaccess
+                ADOAccess = adoaccess.IORequest()
+                print(f'ADOAccess interface {ADOAccess.__version__}')
+                AccessModule[prefix] = ADOAccess
+            except Exception as e:
+                printe(f'ADO devices are not supported on this host: {e}')
+                sys.exit(1)
+        # It is not recommended to plot P2PLant devices.
+        #elif prefix == 'P:':# Check if P2Plant interface is available
+        #    try:
+        #        from p2plantaccess import Access as P2PAccess
+        #        print(f'ADOAccess interface {P2PAccess.__version__}')
+        #        AccessModule[prefix] = P2PAccess
+        #    except Exception as e:
+        #        printe(f'P2Plant devices are not supported on this host: {e}')
+        #        sys.exit(1)
+        else:
+            printe(f'Not supported namespace `{prefix}`')
+            sys.exit(1)
+        print(f'AccessModule: {AccessModule}')
+        return get_pv(adopar)
 
 def get_pv(adopar:str, prop='value'):
     #print(f'>pvp get_pv {adopar}')
     adopar, vslice = split_slice(adopar)
     try:
-        access = PVPlot.access[adopar[:2]]
+        access = AccessModule[adopar[:2]]
         adopar = adopar[2:]
     except:
         access = ADOAccess
@@ -617,13 +650,13 @@ class MapOfDatasets():
                     e = adoPar.index(')')
                     rest = adoPar[e+1:]# it could be arithmetics
                     adoPar = adoPar[7:e]
-                try:
-                    printv(f'check if {adoPar}, is alive')
-                    valts = get_pv(adoPar) # check if parameter is alive
+                printv(f'check if {adoPar}, is alive')
+                if True:#try:
+                    valts = check_pv(adoPar) # check if parameter is alive
                     if valts is None:
                         printw('Could not add {adoPar}')
                         return 2
-                except Exception as e:
+                else:#except Exception as e:
                     printw(f'Exception in getting parameter {adoPar}: {e}')
                     return 1
                 val,ts = valts
@@ -1040,7 +1073,7 @@ class PVPlot():
     subscribedParMap = {}
     perfmon = False # option for performance monitoring
     legend = {}# unfortunately we have to keep track of legends
-    access = {'E:':EPICSAccess, 'L:':LITEAccess, 'P:':PVAccess}
+    #access = {'E:':EPICSAccess, 'L:':LITEAccess, 'P:':PVAccess, '2:':P2PAccess}
     qWin = None
     qTimer = QtCore.QTimer()
     dockArea = None
@@ -1051,10 +1084,6 @@ class PVPlot():
     yProjectionPlotItem = None
     stopped = False
     #statDock = 0
-
-    def addAccess(prefix:str, access):
-        # Method to add external access object.
-        PVPlot[prefix] = access
 
     def start():
         pargs = PVPlot.pargs
