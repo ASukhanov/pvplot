@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs (CA and PVA), LITE and ADO parameters.
 """
-__version__ = 'v1.6.1 2025-03-01'# Print Active namespaces
+__version__ = 'v1.6.2 2025-03-01'# Corrected for use with multiple namespaces
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
@@ -124,8 +124,7 @@ def check_pv(adopar:str):
         else:
             printe(f'Not supported namespace `{prefix}`')
             sys.exit(1)
-        print(f'Active namespaces: {list(AccessModule.keys())}')
-        return get_pv(adopar)
+    return get_pv(adopar)
 
 def get_pv(adopar:str, prop='value'):
     #print(f'>pvp get_pv {adopar}')
@@ -1148,6 +1147,7 @@ class PVPlot():
             printe(f'No datasets created')
             sys.exit(1)
 
+        print(f'Active namespaces: {list(AccessModule.keys())}')
         for dockNum in PVPlot.mapOfDocks:
             set_legend(dockNum, True)
 
