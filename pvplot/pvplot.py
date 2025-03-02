@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs (CA and PVA), LITE and ADO parameters.
 """
-__version__ = 'v1.6.0 2025-02-12'# re-factoring, PVA prefix changed to V.
+__version__ = 'v1.6.1 2025-03-01'# Print Active namespaces
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
@@ -124,7 +124,7 @@ def check_pv(adopar:str):
         else:
             printe(f'Not supported namespace `{prefix}`')
             sys.exit(1)
-        print(f'AccessModule: {AccessModule}')
+        print(f'Active namespaces: {list(AccessModule.keys())}')
         return get_pv(adopar)
 
 def get_pv(adopar:str, prop='value'):
