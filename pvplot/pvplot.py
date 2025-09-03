@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs (CA and PVA), LITE and ADO parameters.
 """
-__version__ = 'v1.6.2 2025-03-01'# Corrected for use with multiple namespaces
+__version__ = 'v1.6.3 2025-09-03'# avoid exception on setDefaultPadding
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
@@ -687,8 +687,10 @@ class CustomViewBox(pg.ViewBox):
 
         # call the init method of the parent class
         super(CustomViewBox, self).__init__()
-        self.setDefaultPadding(0.)# standard is 0.02
-
+        try:
+            self.setDefaultPadding(0.)# standard is 0.02
+        except:
+            printw('Old pyqtgraph? setDefaultPadding is not defined')
         # IMPORTANT: menu creation is deferred because it is expensive 
         # and often the user will never see the menu anyway.
         self.menu = None
