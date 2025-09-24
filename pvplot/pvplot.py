@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs (CA and PVA), LITE and ADO parameters.
 """
-__version__ = 'v1.6.3 2025-09-03'# avoid exception on setDefaultPadding
+__version__ = 'v1.6.4 2025-09-23'# fixing for: pvplot -a'L:localhost:dev1:' -#0'yMin yMax'
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
@@ -1008,7 +1008,7 @@ def add_curves(dockNum:int, curveMap:str):
     #docks = [x.split('.')[0] for x in curves]
     curves = MapOfDatasets.dtsDict.keys()
     docks = PVPlot.mapOfDocks.keys()
-    printv(f'>addcurves curves {curveMap} to {curves,docks}')
+    printv(f'>add_curves {curveMap} to {curves,docks}')
     if dockNum not in docks:
         printv(f'adding new dock{type(dockNum),dockNum}')
         PVPlot.mapOfDocks[dockNum] = dockarea.Dock(str(dockNum),
@@ -1134,8 +1134,10 @@ class PVPlot():
             if pargs.dock:
                 for par in pargs.dock:
                     dockNum = par[0][0]
-                    adopar = par[0][1:].lstrip()
-                    add_curves(int(dockNum), {adopar:adopar})
+                    pars = par[0][1:].lstrip()
+                    for parName in pars.split():
+                        add_curves(int(dockNum), {parName:
+                          pargs.prefix+parName})
             else:
                 # plots for the main dock
                 if not ',' in pargs.parms:
