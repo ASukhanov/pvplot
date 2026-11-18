@@ -1,6 +1,6 @@
 # pvplot
 
-`pvplot` is a dynamic plotting application for control-system data. It supports EPICS Channel Access (CA), EPICS PVAccess (PVA), LiteServer data objects, and ADO parameters.
+`pvplot` is a dynamic plotting application for control-system data. It supports EPICS PVAccess (PVA), EPICS Channel Access (CA), LiteServer data objects, and ADO parameters.
 
 ![pvplot](docs/pvplotx.jpg)
 
@@ -85,7 +85,7 @@ The configuration module may define `DOCKS`, `POINTS`, `TITLE`, `XLABEL`, and `Y
   ```bash
   python -m pvplot -s 0.01 -a 'E:testAPD:scope1:' 'Waveform_RBV[1:500]'
   ```
-- EPICS PVAccess waveform for `python -m epicsdev.imagegen -r30:
+- EPICS PVAccess waveform for `python -m epicsdev.imagegen -r30`:
   ```bash
   python -m pvplot -aV:image:0: -#0'oneRow' -#1'oneRowMean oneRowStd oneRowPeak2Peak'
   ```
