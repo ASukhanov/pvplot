@@ -4,9 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pvplot"
-version = "1.6.4"
+version = "1.7.0"
 authors = [
-  { name="Andrei Sukhanov", email="cyxandr@gmail.com" },
+  { name="Andrey Sukhanov", email="cyxandr@gmail.com" },
 ]
 description = "Plotting tool for EPICS PVs, ADO and LITE parameters"
 readme = "README.md"
@@ -18,7 +18,19 @@ classifiers = [
 ]
 dependencies = [
     "liteaccess",
+    "numpy",
+    "pyqtgraph",
+    "qtpy",
+    "PyQt5",
+    "caproto",
+    "p4p",
 ]
+
 [project.urls]
 "Homepage" = "https://github.com/ASukhanov/pvplot"
 "Bug Tracker" = "https://github.com/ASukhanov/pvplot/issues"
+
+[dependency-groups]
+dev = [
+    "pylint>=2.13.9",
+]

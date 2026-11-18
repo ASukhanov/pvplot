@@ -44,6 +44,7 @@ def main():
     parser.add_argument('parms', nargs = '?', default='yMax yMin',
       help='''For stripchart: space-separated list, for correlation plot: comma-separated list of data objects.''')
     pargs = parser.parse_args()
+
     PVPlot = pvplot.PVPlot
     PVPlot.pargs = pargs
 

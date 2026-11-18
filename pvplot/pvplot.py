@@ -1,109 +1,161 @@
 #!/usr/bin/env python3
 """Plotting package for EPICS PVs (CA and PVA), LITE and ADO parameters.
 """
-__version__ = 'v1.6.4 2025-09-23'# fixing for: pvplot -a'L:localhost:dev1:' -#0'yMin yMax'
+# pylint: disable=invalid-name
+# pylint: disable=line-too-long
+# pylint: disable=import-outside-toplevel
+# pylint: disable=broad-exception-caught
+
+__version__ = 'v1.7.0 2026-11-16'# commenting, pylinting
 #TODO: if backend times out the gui is not responsive
 #TODO: move Add Dataset to Dataset options
 #TODO: add dataset arithmetics
 #TODO: handle XCELLNAME in mon file
 
-import sys, os, time, datetime
-timer = time.perf_counter
-import numpy as np
-from qtpy import QtWidgets as QW, QtGui, QtCore
-from qtpy.QtWidgets import QApplication, QMainWindow, QGridLayout
-import pyqtgraph as pg
-from pyqtgraph.graphicsItems.ViewBox.ViewBoxMenu import ViewBoxMenu
-from pyqtgraph import dockarea
-from functools import partial
-from collections import deque
+import datetime
+import os
+import sys
+import time
 import traceback
+from collections import deque
+from functools import partial
 from importlib import import_module
+
+import numpy as np
+import pyqtgraph as pg
+from pyqtgraph import dockarea
+from pyqtgraph.graphicsItems.ViewBox.ViewBoxMenu import ViewBoxMenu
+from qtpy import QtCore, QtGui, QtWidgets as QW
+from qtpy.QtWidgets import QApplication, QGridLayout, QMainWindow
+
+timer = time.perf_counter
 
 #````````````````````````````Constants````````````````````````````````````````
 X,Y = 0,1
 Scale,Units = 0,1
-TxtColor = (0,128,128)# color of the plot texts
-class color:
-   PURPLE = '\033[95m'
-   CYAN = '\033[96m'
-   DARKCYAN = '\033[36m'
-   BLUE = '\033[94m'
-   GREEN = '\033[92m'
-   YELLOW = '\033[93m'
-   RED = '\033[91m'
-   BOLD = '\033[1m'
-   UNDERLINE = '\033[4m'
-   END = '\033[0m'
+TxtColor = (0, 128, 128)  # color of the plot texts
+
+
+# class Color:
+#     """ANSI color codes for terminal output."""
+#     PURPLE = '\033[95m'
+#     CYAN = '\033[96m'
+#     DARKCYAN = '\033[36m'
+#     BLUE = '\033[94m'
+#     GREEN = '\033[92m'
+#     YELLOW = '\033[93m'
+#     RED = '\033[91m'
+#     BOLD = '\033[1m'
+#     UNDERLINE = '\033[4m'
+#     END = '\033[0m'
+
+
 #````````````````````````````Helper methods```````````````````````````````````
-def printTime(): return time.strftime("%m%d:%H%M%S")
-def printi(msg): print((f'INFO_PVP@{printTime()}: '+msg))
-def printw(msg): print((f'WARN_PVP@{printTime()}: '+msg))
-def printe(msg): print((f'ERR_PVP@{printTime()}: '+msg))
+def printTime():
+    """Return the current time in compact timestamp format."""
+    return time.strftime("%m%d:%H%M%S")
+
+
+def printi(msg):
+    """Log an informational message."""
+    print((f'INFO_PVP@{printTime()}: ' + msg))
+
+
+def printw(msg):
+    """Log a warning message."""
+    print((f'WARN_PVP@{printTime()}: ' + msg))
+
+
+def printe(msg):
+    """Log an error message."""
+    print((f'ERR_PVP@{printTime()}: ' + msg))
+
+
 def _printv(msg, level=0):
+    """Emit a debug message when verbose output is enabled."""
     if PVPlot.pargs.verbose > level:
-        print((f'DBG{level}_PVP@{printTime()}: '+msg))
-def printv(msg):   _printv(msg, 0)
-def printvv(msg):  _printv(msg, 1)
+        print((f'DBG{level}_PVP@{printTime()}: ' + msg))
+
+
+def printv(msg):
+    """Emit a debug message."""
+    _printv(msg, 0)
+
+
+def printvv(msg):
+    """Emit a verbose debug message."""
+    _printv(msg, 1)
+
 
 def croppedText(txt, limit=200):
+    """Trim a string to a maximum length with an ellipsis."""
     if len(txt) > limit:
-        txt = txt[:limit]+'...'
+        txt = txt[:limit] + '...'
     return txt
+
+
 def prettyDict(rDict, lineLimit=75):
-    r=''
-    for dev,devVals in rDict.items():
-        r += dev+'\n'
+    """Render a dictionary as a readable multiline text block."""
+    r = ''
+    for dev, devVals in rDict.items():
+        r += dev + '\n'
         for par, parVals in devVals.items():
-            r += '  '+par+':'
-            if isinstance(parVals,dict):
+            r += '  ' + par + ':'
+            if isinstance(parVals, dict):
                 r += '\n'
                 for attr, attrVal in parVals.items():
-                    r += croppedText(f'    {attr}: {attrVal}',lineLimit)+'\n'
+                    r += croppedText(f'    {attr}: {attrVal}', lineLimit) + '\n'
             else:
-                r += croppedText(f' {parVals}',lineLimit)+'\n'
+                r += croppedText(f' {parVals}', lineLimit) + '\n'
     return r
 
+
 AccessModule = {}
-def check_pv(adopar:str):
-    """Check if PV exists, should be called once, prior to any get_pv()"""
+
+
+def check_pv(adopar: str):
+    """Check if PV exists, should be called once, prior to any get_pv()."""
     prefix = adopar[:2]
-    if prefix[1] != ':':# Set default namespace as ADO
-       prefix = 'A:'
+    if prefix[1] != ':':  # Set default namespace as ADO
+        prefix = 'A:'
     if prefix not in AccessModule:
-        if prefix == 'E:':#Check if EPICS caproto interface is available
+        if prefix == 'E:':  # Check if EPICS caproto interface is available
             try:
                 from . import cad_epics as EPICSAccess
-            except: 
-                try:    from cad_epics import epics as EPICSAccess
-                except: pass
+            except ImportError:
+                try:
+                    from cad_epics import epics as EPICSAccess
+                except ImportError:
+                    EPICSAccess = None
             try:
                 print(f'EPICS Channels Access interface {EPICSAccess.__version__}')
                 AccessModule[prefix] = EPICSAccess
-            except:
-                printe(f'EPICS PVA devices are not supported on this host')
+            except Exception:
+                printe('EPICS PVA devices are not supported on this host')
                 sys.exit(1)
-        elif prefix == 'V:':# Check if EPICS PVAccess interface is available
+        elif prefix == 'V:':  # Check if EPICS PVAccess interface is available
             try:
                 from . import cad_pvaccess as PVAccess
-            except:
-                try:    from cad_pvaccess import pvaccess as PVAccess
-                except: pass
+            except ImportError:
+                try:
+                    from cad_pvaccess import pvaccess as PVAccess
+                except ImportError:
+                    PVAccess = None
             try:
                 print(f'EPICS PVAccess interface {PVAccess.__version__}')
                 AccessModule[prefix] = PVAccess
-            except:
-                printe(f'EPICS PVA devices are not supported on this host')
+            except Exception:
+                printe('EPICS PVA devices are not supported on this host')
                 sys.exit(1)
-        elif prefix == 'L:':# Check if LiteServer interface is available
+        elif prefix == 'L:':  # Check if LiteServer interface is available
             try:
-                import liteaccess as liteAccess 
+                import liteaccess as liteAccess
                 print(f'liteAccess interface {liteAccess.__version__}')
                 AccessModule[prefix] = liteAccess.Access
             except Exception as e:
                 printe(f'LITE devices are not supported on this host: {e}')
                 sys.exit(1)
-        elif prefix == 'A:':# Check if ADO interface is available
+        elif prefix == 'A:':  # Check if ADO interface is available
             try:
                 from cad_io import adoaccess
                 ADOAccess = adoaccess.IORequest()
@@ -112,46 +164,39 @@ def check_pv(adopar:str):
             except Exception as e:
                 printe(f'ADO devices are not supported on this host: {e}')
                 sys.exit(1)
-        # It is not recommended to plot P2PLant devices.
-        #elif prefix == 'P:':# Check if P2Plant interface is available
-        #    try:
-        #        from p2plantaccess import Access as P2PAccess
-        #        print(f'ADOAccess interface {P2PAccess.__version__}')
-        #        AccessModule[prefix] = P2PAccess
-        #    except Exception as e:
-        #        printe(f'P2Plant devices are not supported on this host: {e}')
-        #        sys.exit(1)
         else:
             printe(f'Not supported namespace `{prefix}`')
             sys.exit(1)
     return get_pv(adopar)
 
-def get_pv(adopar:str, prop='value'):
+
+def get_pv(adopar: str):
+    """Read a PV value and its timestamp."""
     #print(f'>pvp get_pv {adopar}')
     adopar, vslice = split_slice(adopar)
     try:
         access = AccessModule[adopar[:2]]
         adopar = adopar[2:]
-    except:
+    except KeyError:
         access = ADOAccess
     if access is None:
         printe(f'No access method for `{adopar}`')
         sys.exit(1)
-    pvTuple = tuple(adopar.rsplit(':',1))
+    pvTuple = tuple(adopar.rsplit(':', 1))
     rd = access.get(pvTuple)[pvTuple]
     val = rd['value']
     try:
         shape = val.shape
         if len(shape) > 2:
-            printe(f'2+dimensional arrays not supported for {dev,par}')
+            printe(f'2+dimensional arrays not supported for {adopar}, shape={shape}')
             return None
-    except:
+    except AttributeError:
         # val does not have attribute shape
         pass
     try:
-        ts = rd['timestamp']# EPICS and LITE
-    except: # ADO & PVA
-        ts = rd['timestampSeconds'] + rd['timestampNanoSeconds']*1.e-9
+        ts = rd['timestamp']  # EPICS and LITE
+    except KeyError:  # ADO & PVA
+        ts = rd['timestampSeconds'] + rd['timestampNanoSeconds'] * 1.e-9
 
     #printv(f"get_pv {adopar}: {rd['value']} {vslice}")
     if vslice is not None:
@@ -159,13 +204,14 @@ def get_pv(adopar:str, prop='value'):
     return val, ts
 
 def change_plotOption(curveName,color=None,width=None,symbolSize=None):
+    """Update a plotted curve style option."""
     dataset = MapOfDatasets.dtsDict[curveName]
-    if color != None:
+    if color is not None:
         dataset.pen.setColor(color)
-    if width != None:
+    if width is not None:
         dataset.width = width
         dataset.pen.setWidth(width)
-    if symbolSize!=None:
+    if symbolSize is not None:
         dataset.symbolSize = symbolSize
     dataset.plot(time.time())
 
@@ -184,6 +230,7 @@ def split_slice(parNameSlice):
     return devParSlice[0], vslice
 
 def get_statistics():
+    """Collect summary statistics for all datasets."""
     statList = []
     for dataset in MapOfDatasets.dtsDict.values():
         #if dataset.dockNum != PVPlot.statDock:
@@ -197,13 +244,14 @@ def get_statistics():
                 f'{v["p2p"]:.6g}'])
     return statList
 
-class PopupHelp(QW.QWidget): 
+class PopupHelp(QW.QWidget):
     """ This "window" is a QWidget. If it has no parent, it
     will appear as a free-floating window as we want.
     Note: The created window will not be closed on app exit.
     To make it happen, the MainWindow should call close this widget in its closeEvent() 
     """
     def __init__(self):
+        """Create the help window and initialize its widget state."""
         super().__init__()
         qr = PVPlot.qWin.geometry()
         self.setGeometry(QtCore.QRect(qr.x(), qr.y(), 0, 0))
@@ -215,34 +263,49 @@ class PopupHelp(QW.QWidget):
         self.setLayout(layout)
 
 class TableModel(QtCore.QAbstractTableModel):
+    """A Qt table model backed by a nested list of values."""
     def __init__(self, data, headers):
-        super(TableModel, self).__init__()
+        """Create a Qt table model backed by a nested list of values."""
+        super().__init__()
         self._data = data
         self.headers = headers
 
-    def headerData(self, section: int, orientation: QtCore.Qt.Orientation, role=QtCore.Qt.DisplayRole):
+    def headerData(
+        self,
+        section: int,
+        orientation: QtCore.Qt.Orientation,
+        role=QtCore.Qt.DisplayRole,
+    ):
+        """Handle the header Data operation."""
         if role == QtCore.Qt.DisplayRole and orientation == QtCore.Qt.Horizontal:
-            try:    r = self.headers[section]
-            except: r = f's{section+1}'
+            try:
+                r = self.headers[section]
+            except IndexError:
+                r = f's{section + 1}'
             return r
 
     def data(self, index, role):
+        """Perform the data operation."""
         if role == QtCore.Qt.DisplayRole:
             # See below for the nested-list data structure.
             # .row() indexes into the outer list,
             # .column() indexes into the sub-list
             return self._data[index.row()][index.column()]
+        return None
 
     def rowCount(self, parent=QtCore.QModelIndex()):
+        """Handle the row Count operation."""
         # The length of the outer list.
         return len(self._data)
 
     def columnCount(self, parent=QtCore.QModelIndex()):
+        """Handle the column Count operation."""
         # The following takes the first sub-list, and returns
         # the length (only works if all rows are an equal length)
         return len(self._data[0])
 
     def refresh_data(self, data):
+        """Handle the refresh data operation."""
         self._data = data
         #print(f'>refresh_data: {self._data}')
         topLeft = self.createIndex(0, 0)
@@ -250,11 +313,12 @@ class TableModel(QtCore.QAbstractTableModel):
         self.dataChanged.emit(topLeft, bottomRight)
 
 class TableWindow(QW.QWidget):
-    """
+    """A table window for displaying statistics.
     This "window" is a QWidget. If it has no parent, it
     will appear as a free-floating window.
     """
-    def __init__(self, data, headers=[]):
+    def __init__(self, data: list, headers: list):
+        """Initialize the statistics window and attach its table model."""
         super().__init__()
         self.setWindowTitle('Statistics')
         layout = QW.QVBoxLayout()
@@ -296,36 +360,37 @@ def update_data():
                 dataset.plot(tt)
 
     if PVPlot.perfmon:
-        v = timer()-tstart
         print('update time:'+str(timer()-tstart))
 
-def set_legend(dockNum:int, state:bool):
-    if state: # legend enabled
+def set_legend(dockNum: int, state: bool):
+    """Show or hide the legend for a dock."""
+    if state:  # legend enabled
         printv(f'add legends to dock{dockNum}')
         widget = PVPlot.mapOfPlotWidgets[dockNum]
         listOfItems = widget.getPlotItem().listDataItems()
-        l = pg.LegendItem((100,60), offset=(70,30), labelTextColor=TxtColor)  # args are (size, offset)
+        l = pg.LegendItem((100, 60), offset=(70, 30), labelTextColor=TxtColor)  # args are (size, offset)
         l.setParentItem(widget.graphicsItem())
         PVPlot.legend[dockNum] = l
         for item in listOfItems:
             iname = item.name()
             printv(f'set_legend {iname} in dock{dockNum}')
             l.addItem(item, iname)
-    else: # legend disabled
+    else:  # legend disabled
         printv(f'remove legend from dock{dockNum}')
-        try:    
+        try:
             PVPlot.legend[dockNum].scene().removeItem(PVPlot.legend[dockNum])
             del PVPlot.legend[dockNum]
         except Exception as e:
-            printe('failed to remove legend '+dockNum+':'+str(e))
+            printe('failed to remove legend ' + str(dockNum) + ':' + str(e))
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 #```````````````````````````DateAxis class: time scale for bottom plot scale``
 class DateAxis(pg.AxisItem):
     def tickStrings(self, values, scale, spacing):
+        """Format axis tick labels for time-based plots."""
         strns = []
-        if len(values) == 0: 
+        if len(values) == 0:
             return ''
-        rng = max(values)-min(values)
+        rng = max(values) - min(values)
         #if rng < 120:
         #    return pg.AxisItem.tickStrings(self, values, scale, spacing)
         if rng < 3600*24:
@@ -348,6 +413,7 @@ class Dataset():
     """ dataset storage, keeps everything what is necessary to plot the curve.
     """
     def __init__(self, dockNum:int, name, paramAndCount):
+        """Create a dataset bound to one dock and one or more PV parameters."""
         self.dockNum = dockNum
         self.name = name
         self.adoPars = paramAndCount # list of max 2 of (adoPar,count)
@@ -362,7 +428,6 @@ class Dataset():
         self.viewXSize = 9E9# Wed Mar 14 2255 16:00:00
         self.viewXRange = [0., 9E9]
         self.scrolling = False
-        
         # plotting options, described in 
         # http://www.pyqtgraph.org/documentation/graphicsItems/plotdataitem.html#pyqtgraph.PlotDataItem
         self.connect = None
@@ -382,14 +447,14 @@ class Dataset():
 
         # ``````````````````` Add plotItem ``````````````````````````````````````
         #dockNum = name.split('.')[0]
-        printv('plotItem for: '+str([s for s in self.adoPars])+', name:'+str(dockNum))
+        printv(f'plotItem for: {self.adoPars}, name: {dockNum}')
         initialWidth = 16
         self.data = [np.empty(initialWidth),np.empty(initialWidth)]# [X,U] data storage
         self.dataPtr = 0
         count = self.adoPars[0][1] #
         printv(f'adoPars,count: {self.adoPars,count}')
         isCorrelationPlot = len(self.adoPars) >= 2
-        
+
         # assign the plotwidget
         if dockNum in PVPlot.mapOfPlotWidgets:
             # dock already exist, use the existing plotwidget
@@ -401,26 +466,24 @@ class Dataset():
             self.viewBox = CustomViewBox(dockNum, self)
             self.viewBox.setMouseMode(self.viewBox.RectMode)
             self.viewBox.sigRangeChangedManually.connect(self.xrangeChanged)
-            printv(f'Creating new dock{dockNum}')
             title = None
             if count == 1 and not isCorrelationPlot:
                 self.plotWidget = pg.PlotWidget(title=title, viewBox=self.viewBox,
                   axisItems={'bottom':DateAxis(orientation='bottom')})
                 self.timeAxis = True
-                if dockNum != 0:
-                    self.plotWidget.setXLink(PVPlot.mapOfPlotWidgets[0])
-            else: 
+            else:
                 self.plotWidget = pg.PlotWidget(title=title, viewBox=self.viewBox)
             #self.plotWidget.showGrid(True,True)
             PVPlot.mapOfPlotWidgets[dockNum] = self.plotWidget
             PVPlot.mapOfDocks[dockNum].addWidget(self.plotWidget)
             printv(f'docks: {PVPlot.mapOfDocks.keys()}, widgets: {PVPlot.mapOfPlotWidgets.keys()}')
 
-            xl,yl = 'LabelX','LabelY'
+            xl, yl = 'LabelX', 'LabelY'
             try:
                 c = PVPlot.config
-                xl,yl = c.XLABEL,c.YLABEL
-            except: pass
+                xl, yl = c.XLABEL, c.YLABEL
+            except AttributeError:
+                pass
             #print(f'd:{self.dockNum}, X,Y: {xl,yl}')
             if self.dockNum == 0 and yl != 'LabelY':
                 self.plotWidget.setLabel('left', yl)
@@ -437,7 +500,7 @@ class Dataset():
         # set X and Y ranges
         rangeMap = {X: (PVPlot.pargs.xrange, self.plotWidget.setXRange),
                     Y: (PVPlot.pargs.yrange, self.plotWidget.setYRange)}
-        for axis,v in rangeMap.items():
+        for _axis,v in rangeMap.items():
             r,func = v
             if r is None:
                 continue
@@ -457,15 +520,19 @@ class Dataset():
         self.lastTimePlotted = 0.
 
     def add_plot(self):
+        """Add the dataset plot item back to the widget."""
         self.plotWidget.addItem(self.plotItem)
 
     def remove_plot(self):
+        """Remove the dataset plot item from the widget."""
         self.plotWidget.removeItem(self.plotItem)
 
     def __str__(self):
+        """Return a concise summary string for the dataset."""
         return f'Dataset {self.name}, x: {self.data[X].shape}'
 
     def xrangeChanged(self):
+        """Respond to a change in the displayed X range."""
         viewRange = self.viewBox.viewRange()
         self.viewXRange = viewRange[X]
         viewlimit = self.viewXRange[1]
@@ -478,8 +545,9 @@ class Dataset():
         #print(f'scrolling: {self.scrolling}')
 
     def shift_viewXRange(self):
+        """Shift the visible X range to keep the plot scrolling."""
         if self.viewBox.state['autoRange'][X]:
-                return
+            return
         dx = self.viewXSize*PVPlot.padding
         self.viewXRange[0] += dx
         self.viewXRange[1] += dx
@@ -487,6 +555,7 @@ class Dataset():
         self.viewBox.setXRange(self.viewXRange[0], self.viewXRange[1])
 
     def plot(self, ts):
+        """Plot the current buffered data."""
         # Plot the dataset. It may be several updates between these calls.
         if self.lastTimePlotted == ts:
             return
@@ -514,10 +583,11 @@ class Dataset():
         )
 
     def update_plot(self):
+        """Refresh dataset values and redraw the plot when needed."""
         curvePars = self.adoPars
         yd,ts = None,None
         try:
-            #Limitation: only one (first) curve will be plotted 
+            #Limitation: only one (first) curve will be plotted
             yd, ts = get_pv(curvePars[0][0])
         except Exception as e:
             #printv('got '+str((yd,ts))+', from:'+str(curvePars[0][0])+', except:'+str(e))
@@ -532,10 +602,11 @@ class Dataset():
         self.dataChanged = True
         self.lastTimeUpdated = ts
         #print(f'update {self.name, round(ts,3), round(self.lastTimePlotted,3)}')
-        try:    
+        try:
             l = len(yd)
-            if l == 1: yd = yd[0]
-        except: 
+            if l == 1:
+                yd = yd[0]
+        except TypeError:
             l = 1
 
         # Evaluate X and Y arrays
@@ -560,15 +631,17 @@ class Dataset():
                 ptr -= 1
             self.data[Y][ptr] = yd
             if len(curvePars) > 1:
-                #print('Correlation Plot') 
+                #print('Correlation Plot')
                 printv(f'correlation plot: {curvePars[1][0]}')
                 try:
-                    v,*_ = get_pv(curvePars[1][0])
-                    try:    v = v[0]
-                    except: pass 
+                    v, *_ = get_pv(curvePars[1][0])
+                    try:
+                        v = v[0]
+                    except (TypeError, IndexError):
+                        pass
                     self.data[X][ptr] = v
-                except Exception as e:
-                    printe('no data from '+str(curvePars[1][0]))
+                except Exception:
+                    printe('no data from ' + str(curvePars[1][0]))
             else:
                 # scrolling plot with time scale
                 #print(f'ts: {round(ts,3), round(self.viewXRange[1],3)}')
@@ -579,7 +652,7 @@ class Dataset():
             self.dataPtr = ptr
 
             # re-alocate arrays,if necessary
-            if (ptr >= self.data[Y].shape[0]):
+            if ptr >= self.data[Y].shape[0]:
                 #print(f'realllocate: ptr: {ptr,self.data[Y].shape[0]}')
                 tmp = self.data
                 self.data = [np.empty(self.data[Y].shape[0] * 2),
@@ -589,6 +662,7 @@ class Dataset():
                 #printi(f'adjust {self.name} from {tmp[X].shape} to {self.data[X].shape}')
 
     def _visibleRange(self):
+        """Return the visible slice of the dataset in the current view."""
         npt = self.dataPtr
         #print(f'viewRange={self.viewBox.viewRange()}')
         xr = self.viewBox.viewRange()[X]
@@ -603,11 +677,13 @@ class Dataset():
         return ileft,iright
 
     def show_yProjection(self):
+        """Display the Y projection for the visible data range."""
         ileft,iright = self._visibleRange()
         h = np.histogram(self.data[Y][ileft:iright],100)
         PVPlot.yProjectionPlotItem.setData(h[1],h[0],pen='b',stepMode=True)
 
     def get_statistics(self):
+        """Collect summary statistics for all datasets."""
         ileft,iright = self._visibleRange()
         parname = self.adoPars[0][0]
         r = {parname:{}}
@@ -620,20 +696,21 @@ class Dataset():
         return r
 
     def get_visibleData(self):
+        """Return the currently visible X and Y arrays."""
         ileft,iright = self._visibleRange()
         r = (self.data[X][ileft:iright], self.data[Y][ileft:iright])
         return r
-        
+
 class MapOfDatasets():
     """Global dictionary of Datasets, provides safe methods to add and remove 
     the datasets"""
     dtsDict = {}    #{curveName:dataset,,,}
-    
+
     def add(dockNum:int, mapOfCurves):
         """add new datasets, the adoPars is the space delimited string of 
         source device:parameters."""
         printv(f'>MapOfDatasets.add({dockNum, mapOfCurves})')
-        for i, kv in enumerate(mapOfCurves.items()):
+        for _i, kv in enumerate(mapOfCurves.items()):
             curveName,devList = kv
             printv(f'curveName: {curveName,devList}')
             if isinstance(devList,str):
@@ -643,32 +720,31 @@ class MapOfDatasets():
             devList.reverse()
             pnameAndCount = []
             for adoPar in devList:
-                adoPar = adoPar.lstrip()#remove leading whitespaces
+                adoPar = adoPar.lstrip()  # remove leading whitespaces
                 #print(f'adoPar: {adoPar}')
                 if adoPar.startswith('device('):
                     e = adoPar.index(')')
-                    rest = adoPar[e+1:]# it could be arithmetics
+                    _rest = adoPar[e + 1:]  # it could be arithmetics
                     adoPar = adoPar[7:e]
                 printv(f'check if {adoPar}, is alive')
-                if True:#try:
-                    valts = check_pv(adoPar) # check if parameter is alive
-                    if valts is None:
-                        printw('Could not add {adoPar}')
-                        return 2
-                else:#except Exception as e:
-                    printw(f'Exception in getting parameter {adoPar}: {e}')
-                    return 1
-                val,ts = valts
-                try:    count = len(val)
-                except: count = 1
-                pnameAndCount.append((adoPar,count))
+                valts = check_pv(adoPar)  # check if parameter is alive
+                if valts is None:
+                    printw('Could not add {adoPar}')
+                    return 2
+                val, ts = valts
+                try:
+                    count = len(val)
+                except TypeError:
+                    count = 1
+                pnameAndCount.append((adoPar, count))
             printv('adding '+str(pnameAndCount)+' to datasets['+curveName+']')
             MapOfDatasets.dtsDict[curveName] = Dataset(dockNum, curveName, pnameAndCount)
             PVPlot.mapOfCurves[dockNum].append(curveName)
         printv(f'MapOfDatasets: {[(k,v.adoPars) for k ,v in  MapOfDatasets.dtsDict.items()]}')
         return 0
-    
+
     def remove(name):
+        """Remove a dataset by name."""
         printv('MapOfDatasets.remove '+name)
         dataset = MapOfDatasets.dtsDict[name]
         dataset.plotWidget.removeItem(dataset.plotItem)
@@ -679,6 +755,7 @@ class CustomViewBox(pg.ViewBox):
     """ defines actions, activated on the right mouse click in the dock
     """
     def __init__(self, dockNum:int, dataset):
+        """Initialize a dock-specific view box with dataset-scoped range state."""
         #self.dockNum = kwds['name'] # cannot use name due to an issue in demo
         #del kwds['name'] # the name in ViewBox.init fails in demo
         self.dockNum = dockNum
@@ -688,21 +765,22 @@ class CustomViewBox(pg.ViewBox):
         # call the init method of the parent class
         super(CustomViewBox, self).__init__()
         try:
-            self.setDefaultPadding(0.)# standard is 0.02
-        except:
+            self.setDefaultPadding(0.)  # standard is 0.02
+        except AttributeError:
             printw('Old pyqtgraph? setDefaultPadding is not defined')
-        # IMPORTANT: menu creation is deferred because it is expensive 
+        # IMPORTANT: menu creation is deferred because it is expensive
         # and often the user will never see the menu anyway.
         self.menu = None
         self.cursors = set()
         self.unzooming = False
         self.rangestack = deque([],10) #stack of 10 of view ranges
-           
+
     #v32#def mouseClickEvent(self, ev) removed, due to blank exports
 
     def raiseContextMenu(self, ev):
+        """Raise the per-dock context menu for the plot view."""
         # Let the scene add on to the end of our context menu
-        menuIn = self.getContextMenus()        
+        menuIn = self.getContextMenus()
         menu = self.scene().addParentContextMenus(self, menuIn, ev)
         menu.popup(ev.screenPos().toPoint())
         return True
@@ -720,7 +798,7 @@ class CustomViewBox(pg.ViewBox):
 
         # unzoom last
         unzoom = self.menu.addAction("&UnZoom")
-        unzoom.triggered.connect(lambda: self.unzoom())
+        unzoom.triggered.connect(self.unzoom)
 
         # Datasets options dialog
         setDatasets = self.menu.addAction('Datasets &Options')
@@ -736,10 +814,10 @@ class CustomViewBox(pg.ViewBox):
         for cursor in ['Vertical','Horizontal']:
             action = cursorMenu.addAction(cursor)
             action.triggered.connect(partial(self.cursorAction,cursor))
-        
+
         # popup help
         phelp = self.menu.addAction("&help")
-        phelp.triggered.connect(lambda: PVPlot.actionHelp())
+        phelp.triggered.connect(PVPlot.actionHelp)
 
         # Labels
         labelX = QW.QWidgetAction(self.menu)
@@ -754,7 +832,7 @@ class CustomViewBox(pg.ViewBox):
             lambda: self.set_label('left',self.labelYGui))
         labelY.setDefaultWidget(self.labelYGui)
         self.menu.addAction(labelY)
-                   
+
         backgroundAction = QW.QWidgetAction(self.menu)
         backgroundGui = QW.QCheckBox('Black background')
         backgroundGui.stateChanged.connect(
@@ -769,7 +847,7 @@ class CustomViewBox(pg.ViewBox):
         legendGui.stateChanged.connect(lambda x: self.set_legend(x))
         legenAction.setDefaultWidget(legendGui)
         self.menu.addAction(legenAction)
-        
+
         runAction = QW.QWidgetAction(self.menu)
         runWidget = QW.QCheckBox('&Stop')
         runWidget.setChecked(PVPlot.stopped)
@@ -790,14 +868,16 @@ class CustomViewBox(pg.ViewBox):
         return self.menu
 
     def cursor_text(self, pos, horizontal):
+        """Return the text to display for the cursor at the given position."""
         #print(f'timeAxis = {self.dataset.timeAxis}')
         if (not horizontal) and self.dataset.timeAxis:
             txt = datetime.datetime.fromtimestamp(pos).strftime('%H:%M:%S')
         else:
             txt = f'{pos:.4g}'
         return txt
-        
+
     def cursorAction(self, direction):
+        """Create a new cursor on the selected axis."""
         angle = {'Vertical':90, 'Horizontal':0}[direction]
         pwidget = PVPlot.mapOfPlotWidgets[self.dockNum]
         vid = {'Vertical':0, 'Horizontal':1}[direction]
@@ -814,6 +894,7 @@ class CustomViewBox(pg.ViewBox):
         self.cursorPositionChanged(cursor)
 
     def cursorPositionChanged(self, cursor):
+        """Update a cursor label when it moves."""
         pos = cursor.value()
         horizontal = cursor.angle == 0.
         pwidget = PVPlot.mapOfPlotWidgets[self.dockNum]
@@ -883,10 +964,11 @@ class CustomViewBox(pg.ViewBox):
               change_plotOption(str(self.sender().objectName()),width=x))
             tbl.setCellWidget(row, col, widthSlider)
 
-            col+=1
+            col += 1
             # symbol, selected from a comboBox
-            self.symbol = QW.QComboBox() # TODO: why self?
-            for symbol in ' ostd+x': self.symbol.addItem(symbol)
+            self.symbol = QW.QComboBox()  # TODO: why self?
+            for symbol in ' ostd+x':
+                self.symbol.addItem(symbol)
             self.symbol.setObjectName(curveName)
             self.symbol.currentIndexChanged.connect(self.set_symbol)
             tbl.setCellWidget(row, col, self.symbol)
@@ -927,6 +1009,7 @@ class CustomViewBox(pg.ViewBox):
             pass
             
     def set_label(self,side,labelGui):
+        """Update a plot axis label."""
         dock,label = self.dockNum,str(labelGui.text())
         printv('changed_label '+side+': '+str((dock,label)))
         PVPlot.mapOfPlotWidgets[dock].setLabel(side,label, units='')
@@ -934,19 +1017,23 @@ class CustomViewBox(pg.ViewBox):
         #labelGui.setText('LabelX' if side=='bottom' else 'LabelY')
 
     def set_legend(self, state):
+        """Show or hide the legend for a dock."""
         state = (state==QtCore.Qt.Checked)
         set_legend(self.dockNum, state)
 
     def set_stop(self, state):
+        """Pause or resume plotting updates."""
         PVPlot.stop(state == QtCore.Qt.Checked)
 
     def set_sleepTime(self, itemData):
+        """Update the refresh interval for the timer."""
         #print('setting SleepTime to: '+str(itemData))
         PVPlot.pargs.sleepTime = itemData
         PVPlot.qTimer.stop()
         PVPlot.qTimer.start(int(PVPlot.pargs.sleepTime*1000))
 
     def unzoom(self):
+        """Restore the previous view range."""
         #print('>unzoom')
         try:
             if not self.unzooming:
@@ -962,11 +1049,13 @@ class CustomViewBox(pg.ViewBox):
             update=True, disableAutoRange=True)
 
     def show_statistics(self):
+        """Display statistics for the current dock."""
         #print(f'print statistics for {self.dockNum}')
         #PVPlot.statDock = self.dockNum
         PVPlot.actionStatistics()
 
     def show_yProjection(self):
+        """Display the Y projection for the visible data range."""
         if PVPlot.yProjectionWindow is None:
             PVPlot.yProjectionWindow = pg.PlotWidget()
             PVPlot.yProjectionPlotItem = pg.PlotDataItem()
@@ -978,6 +1067,7 @@ class CustomViewBox(pg.ViewBox):
         self.dataset.show_yProjection()
 
     def enable_dataset(self, state):
+        """Enable or disable a plotted dataset."""
         dtsetName = str(self.sender().objectName())
         #print(f'enable_dataset {dtsetName, (state==QtCore.Qt.Checked)}')
         dataset = MapOfDatasets.dtsDict[dtsetName]
@@ -988,7 +1078,7 @@ class CustomViewBox(pg.ViewBox):
 #,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 
 def callback(args):
-    #print(f'cb: {args}')
+    """Update the display scaling based on a subscribed parameter."""
     for hostDevPar, pardict in args.items():
         try:
             axis,units = PVPlot.subscribedParMap[(hostDevPar)]
@@ -1001,9 +1091,10 @@ def callback(args):
         PVPlot.scaleUnits[axis][Scale] = scale
 
 def add_curves(dockNum:int, curveMap:str):
-    # if dock name is new then create new dock, otherwise extend the 
+    """Add curve definitions to a dock."""
+    # if dock name is new then create new dock, otherwise extend the
     # existing one with new curve
-    
+
     #curves = [x for x in MapOfDatasets.dtsDict]
     #docks = [x.split('.')[0] for x in curves]
     curves = MapOfDatasets.dtsDict.keys()
@@ -1017,11 +1108,11 @@ def add_curves(dockNum:int, curveMap:str):
             PVPlot.dockArea.addDock(PVPlot.mapOfDocks[dockNum], 'right',
             closable=True)
         else:
-            PVPlot.dockArea.addDock(PVPlot.mapOfDocks[dockNum], 
+            PVPlot.dockArea.addDock(PVPlot.mapOfDocks[dockNum],
               'top', PVPlot.mapOfDocks[0], closable=True) #TODO:closable does not work
         PVPlot.mapOfCurves[dockNum] = []
     if MapOfDatasets.add(dockNum, curveMap):
-            printe(f'in add_curves: {dockNum, curveMap}')
+        printe(f'in add_curves: {dockNum, curveMap}')
 
 def excepthook(exc_type, exc_value, exc_tb):
     """To uncover exceptions, missed in Qt"""
@@ -1035,13 +1126,14 @@ class tmpClass():
     DOCKS = [{}]
 
 def parse_input_parameters(pargs):
+    """Load plotting configuration from a module or inline arguments."""
     fn = pargs.file
     if fn:
         sys.path.append(pargs.configDir)
         print(f'Config file: {pargs.configDir}/{fn}')
         try:
             ConfigModule = import_module(fn)
-            configFormat = ConfigModule.configFormat
+            #configFormat = ConfigModule.configFormat
         except ModuleNotFoundError as e:
             printe(f'Trying to import {pargs.configDir}/{fn}: {e}')
             sys.exit(0)
@@ -1055,15 +1147,22 @@ def parse_input_parameters(pargs):
         return tmpClass
 
 class MainWindow(QW.QMainWindow):
-    def closeEvent(self,event):
+    """Main application window for PVPlot."""
+    def closeEvent(self, event):
+        """Handle the main window closing event."""
         print('Closing all windows')
-        try:    PVPlot.statisticsWindow.close()
-        except: pass
-        try:    PVPlot.helpWin.close()
-        except: pass
+        try:
+            PVPlot.statisticsWindow.close()
+        except AttributeError:
+            pass
+        try:
+            PVPlot.helpWin.close()
+        except AttributeError:
+            pass
         event.accept()
 
 class PVPlot():
+    """Global state for the PVPlot application."""
     config = None
     pargs = None
     mapOfPlotWidgets = {}# active plotItems
@@ -1087,11 +1186,14 @@ class PVPlot():
     #statDock = 0
 
     def start():
+        """Start the PVPlot application window and plots."""
         pargs = PVPlot.pargs
         printv(f'pargs: {PVPlot.pargs}')
 
-        try:    os.environ["QT_SCALE_FACTOR"] = str(pargs.zoomin)
-        except: pass
+        try:
+            os.environ["QT_SCALE_FACTOR"] = str(pargs.zoomin)
+        except TypeError:
+            pass
         qApp = QApplication([])
         PVPlot.qWin = MainWindow()
         PVPlot.dockArea = dockarea.DockArea()
@@ -1119,11 +1221,15 @@ class PVPlot():
         if pargs.file is not None:
             PVPlot.config = parse_input_parameters(pargs)
 
-            try:    pargs.limit = PVPlot.config.POINTS
-            except: pass
+            try:
+                pargs.limit = PVPlot.config.POINTS
+            except AttributeError:
+                pass
 
-            try:    title = PVPlot.config.TITLE
-            except: title = title = f'pvplot {pargs.parms}'
+            try:
+                title = PVPlot.config.TITLE
+            except AttributeError:
+                title = f'pvplot {pargs.parms}'
             PVPlot.qWin.setWindowTitle(title)
             dockList = PVPlot.config.DOCKS
             for dockNum,curveMap in enumerate(dockList):
@@ -1148,7 +1254,7 @@ class PVPlot():
                     add_curves(0, {f'{y} vs {x}': (pargs.prefix+x, pargs.prefix+y)})
 
         if len(MapOfDatasets.dtsDict) == 0:
-            printe(f'No datasets created')
+            printe('No datasets created')
             sys.exit(1)
 
         print(f'Active namespaces: {list(AccessModule.keys())}')
@@ -1160,7 +1266,7 @@ class PVPlot():
             print(f'infra: {pargs.prefix}')
             infrastructure = pargs.prefix[:2]
             if infrastructure != 'L:':
-                printe(f'The --xscale option is supported only for LITE infrastucture')
+                printe('The --xscale option is supported only for LITE infrastucture')
                 sys.exit(1)
             hostDev = pargs.prefix[2:]
             if hostDev[-1] == ':':
@@ -1191,6 +1297,7 @@ class PVPlot():
         sys.exit(ret)
 
     def stop(state):
+        """Pause or resume the plotting timer."""
         PVPlot.stopped = state
         suffix = ' is stopped'
         if state == True:
@@ -1203,15 +1310,18 @@ class PVPlot():
 
     #``````````Shorthcut handlers
     def actionHelp():
+        """Open the built-in help window."""
         PVPlot.helpWin = PopupHelp()
         PVPlot.helpWin.label.setText(PVPlot.helptxt)
         PVPlot.helpWin.show()
 
     def actionStop():
+        """Toggle the stopped state for the plotting loop."""
         PVPlot.stopped = not PVPlot.stopped
         PVPlot.stop(PVPlot.stopped)
 
     def actionUnzoom():
+        """Unzoom all docks in the current plot area."""
         md = PVPlot.mapOfDocks
         docks = md.keys()
         for dockNum in docks:
@@ -1219,11 +1329,12 @@ class PVPlot():
             vb.unzoom()
 
     def actionStatistics():
+        """Show the statistics window for the current datasets."""
         #print(f'>actionStatistics {PVPlot.statDock}')
         sl = get_statistics()
         if PVPlot.statisticsWindow is None:
             header = ['Parameter','XMin','XMax','Mean','StDev','Peak2Peak']
             PVPlot.statisticsWindow = TableWindow(sl, header)
         PVPlot.statisticsWindow.model.refresh_data(sl)
-        PVPlot.statisticsWindow.show()        
-        
+        PVPlot.statisticsWindow.show()
+
